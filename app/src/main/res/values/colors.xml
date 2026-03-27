@@ -16,6 +16,11 @@
     <color name="accent_blue">#FF64B5F6</color>
     <color name="error_color">#FFFFCDD2</color>
 
+    <!-- Swipe refresh colors -->
+    <color name="refresh_color_1">#FF64B5F6</color>
+    <color name="refresh_color_2">#FFFFC107</color>
+    <color name="refresh_color_3">#FF4CAF50</color>
+
     <!-- Status / Nav bar -->
     <color name="colorPrimary">#FF1565C0</color>
     <color name="colorPrimaryVariant">#FF0D47A1</color>

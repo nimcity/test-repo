@@ -17,7 +17,26 @@
     <string name="visibility_value">%1$d km</string>
     <string name="last_updated">Updated: %1$s</string>
     <string name="enter_city_name">Please enter a city name</string>
-    <string name="location_permission_denied">Location permission denied</string>
-    <string name="location_unavailable">Unable to get location</string>
-    <string name="location_error">Location error. Try again.</string>
+    <string name="location_permission_denied">Location permission denied. Search for a city manually.</string>
+    <string name="location_unavailable">Unable to get location. Try again.</string>
+    <string name="location_error">Location error. Please try again.</string>
+
+    <!-- Extra format strings used by MainActivity -->
+    <string name="humidity_label">Humidity</string>
+    <string name="wind_label">Wind</string>
+    <string name="pressure_label">Pressure</string>
+    <string name="visibility_label">Visibility</string>
+    <string name="humidity_desc">Humidity icon</string>
+    <string name="wind_desc">Wind icon</string>
+    <string name="pressure_desc">Pressure icon</string>
+    <string name="visibility_desc">Visibility icon</string>
+    <string name="not_available">N/A</string>
+    <string name="unit_celsius_label">°C</string>
+    <string name="unit_fahrenheit_label">°F</string>
+    <string name="feels_like_fmt">Feels like %1$s</string>
+    <string name="humidity_fmt">%1$d%%</string>
+    <string name="pressure_fmt">%1$d hPa</string>
+    <string name="visibility_fmt">%1$d km</string>
+    <string name="high_low_fmt">H:%1$s  L:%2$s</string>
+    <string name="error_empty_search">Please enter a city name</string>
 </resources>
