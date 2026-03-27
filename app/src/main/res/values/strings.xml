@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">WeatherNow</string>
+    <string name="search_hint">Search city…</string>
+    <string name="search">Search</string>
+    <string name="use_location">My Location</string>
+    <string name="weather_icon_desc">Weather icon</string>
+    <string name="forecast_title">5-Day Forecast</string>
+    <string name="feels_like">Feels like %1$s</string>
+    <string name="humidity">Humidity</string>
+    <string name="wind">Wind</string>
+    <string name="pressure">Pressure</string>
+    <string name="visibility">Visibility</string>
+    <string name="humidity_value">%1$d%%</string>
+    <string name="wind_value">%1$s</string>
+    <string name="pressure_value">%1$d hPa</string>
+    <string name="visibility_value">%1$d km</string>
+    <string name="last_updated">Updated: %1$s</string>
+    <string name="enter_city_name">Please enter a city name</string>
+    <string name="location_permission_denied">Location permission denied</string>
+    <string name="location_unavailable">Unable to get location</string>
+    <string name="location_error">Location error. Try again.</string>
+</resources>

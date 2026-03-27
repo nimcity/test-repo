@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="white">#FFFFFFFF</color>
+    <color name="black">#FF000000</color>
+
+    <!-- Gradient sky blue -->
+    <color name="gradient_start">#FF1565C0</color>
+    <color name="gradient_end">#FF0D47A1</color>
+
+    <!-- UI elements -->
+    <color name="card_bg">#33FFFFFF</color>
+    <color name="search_bg">#22FFFFFF</color>
+    <color name="button_bg">#FF1976D2</color>
+    <color name="subtitle_color">#CCE3F2FD</color>
+    <color name="hint_color">#99FFFFFF</color>
+    <color name="accent_blue">#FF64B5F6</color>
+    <color name="error_color">#FFFFCDD2</color>
+
+    <!-- Status / Nav bar -->
+    <color name="colorPrimary">#FF1565C0</color>
+    <color name="colorPrimaryVariant">#FF0D47A1</color>
+    <color name="colorOnPrimary">#FFFFFFFF</color>
+    <color name="colorSecondary">#FF64B5F6</color>
+    <color name="colorOnSecondary">#FF000000</color>
+    <color name="colorSurface">#FF1565C0</color>
+    <color name="colorOnSurface">#FFFFFFFF</color>
+    <color name="colorBackground">#FF1565C0</color>
+    <color name="colorOnBackground">#FFFFFFFF</color>
+</resources>
