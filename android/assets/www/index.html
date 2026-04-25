@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no,maximum-scale=1.0">
+<title>Puzzle Fighter</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+body{background:#0d0d2b;overflow:hidden;height:100vh;width:100vw;display:flex;flex-direction:column;align-items:center;font-family:'Arial Black',Arial,sans-serif;color:#fff;touch-action:none;}
+#hdr{padding:6px 0 2px;font-size:18px;font-weight:900;color:#ffd700;text-shadow:0 0 12px #ff8800;letter-spacing:3px;text-align:center;flex-shrink:0;}
+#wrap{display:flex;align-items:flex-start;justify-content:center;gap:8px;flex-shrink:0;}
+#btns{display:flex;gap:6px;padding:6px 0;flex-shrink:0;justify-content:center;}
+.btn{background:rgba(255,255,255,0.12);border:2px solid rgba(255,255,255,0.25);border-radius:10px;color:#fff;font-size:22px;width:58px;height:52px;display:flex;align-items:center;justify-content:center;cursor:pointer;user-select:none;-webkit-user-select:none;}
+.btn:active{background:rgba(255,255,255,0.3);}
+#overlay{position:fixed;inset:0;background:rgba(0,0,0,0.82);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:999;gap:10px;}
+#overlay h2{font-size:28px;color:#ffd700;text-shadow:0 0 15px #ff8800;}
+#overlay p{font-size:14px;color:#bbb;text-align:center;max-width:280px;line-height:1.5;}
+#startBtn{margin-top:10px;padding:14px 40px;font-size:18px;font-weight:900;background:linear-gradient(135deg,#ff6b35,#ee0000);border:none;border-radius:14px;color:#fff;cursor:pointer;letter-spacing:1px;}
+#startBtn:active{filter:brightness(1.2);}
+</style>
+</head>
+<body>
+<div id="hdr">★ PUZZLE FIGHTER ★</div>
+<canvas id="cv"></canvas>
+<div id="btns">
+  <div class="btn" id="bL">◀</div>
+  <div class="btn" id="bRL">↺</div>
+  <div class="btn" id="bD">▼</div>
+  <div class="btn" id="bRR">↻</div>
+  <div class="btn" id="bR">▶</div>
+</div>
+<div id="overlay">
+  <h2>PUZZLE FIGHTER</h2>
+  <p>Stack same-color gems to form <b style="color:#ffd700">Power Gems</b>.<br>
+  Use <b style="color:#ff88ff">Crash Gems ◆</b> to explode them!<br>
+  Chain combos to attack your opponent!</p>
+  <p style="font-size:12px;color:#888;margin-top:4px">◀▶ Move &nbsp;|&nbsp; ↺↻ Rotate &nbsp;|&nbsp; ▼ Drop</p>
+  <button id="startBtn" onclick="startGame()">▶ START GAME</button>
+</div>
+<script>
+// ── CONSTANTS ────────────────────────────────────────────────
+const COLS=6,ROWS=12;
+const COLORS=['red','blue','yellow','green'];
+const PAL={
+  red:   ['#ff9090','#ee2222','#990000','#ff3333'],
+  blue:  ['#88aaff','#2255ee','#003399','#4477ff'],
+  yellow:['#ffee88','#ddaa00','#886600','#ffcc00'],
+  green: ['#88ee88','#22bb22','#005500','#33dd33'],
+  gray:  ['#cccccc','#888888','#444444','#aaaaaa'],
+};
+const TN=0,TC=1,TK=2,TP=3; // normal,crash,counter,power
+
+// ── BOARD ────────────────────────────────────────────────────
+class Board {
+  constructor(){
+    this.g=Array.from({length:ROWS},()=>new Array(COLS).fill(null));
+    this.pg={};this.pid=1;
+  }
+  at(r,c){return(r>=0&&r<ROWS&&c>=0&&c<COLS)?this.g[r][c]:undefined;}
+  put(r,c,v){this.g[r][c]=v;}
+  gravity(){
+    let mv=false;
+    for(let c=0;c<COLS;c++){
+      let w=ROWS-1;
+      for(let r=ROWS-1;r>=0;r--){
+        if(this.g[r][c]!==null){
+          if(r!==w){this.g[w][c]=this.g[r][c];this.g[r][c]=null;mv=true;}
+          w--;
+        }
+      }
+    }
+    return mv;
+  }
+  formPower(){
+    // reset power marks
+    for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
+      const x=this.g[r][c];
+      if(x&&x.t===TP){x.t=TN;x.pid=null;}
+    }
+    this.pg={};
+    const pw=new Set(),pc={};
+    for(let r=0;r<ROWS-1;r++)for(let c=0;c<COLS-1;c++){
+      const a=this.g[r][c],b=this.g[r][c+1],d=this.g[r+1][c],e=this.g[r+1][c+1];
+      if(a&&b&&d&&e&&a.t===TN&&b.t===TN&&d.t===TN&&e.t===TN
+        &&a.col===b.col&&a.col===d.col&&a.col===e.col){
+        const col=a.col;
+        [[r,c],[r,c+1],[r+1,c],[r+1,c+1]].forEach(([rr,cc])=>{
+          const k=`${rr},${cc}`;pw.add(k);pc[k]=col;
+        });
+      }
+    }
+    if(!pw.size)return;
+    const vis=new Set();
+    for(const k of pw){
+      if(vis.has(k))continue;
+      const [sr,sc]=k.split(',').map(Number),col=pc[k],grp=[];
+      const q=[k];
+      while(q.length){
+        const n=q.shift();
+        if(vis.has(n)||!pw.has(n)||pc[n]!==col)continue;
+        vis.add(n);grp.push(n);
+        const[nr,nc]=n.split(',').map(Number);
+        [[nr-1,nc],[nr+1,nc],[nr,nc-1],[nr,nc+1]].forEach(([a,b])=>{
+          const nk=`${a},${b}`;if(!vis.has(nk))q.push(nk);
+        });
+      }
+      const id=this.pid++;
+      this.pg[id]={col,cells:grp.map(k=>{const[r,c]=k.split(',').map(Number);return{r,c};})};
+      grp.forEach(k=>{const[r,c]=k.split(',').map(Number);this.g[r][c]={t:TP,col,pid:id};});
+    }
+  }
+  destroyGroup(r,c){
+    const cell=this.g[r][c];if(!cell)return 0;
+    const todo=new Set();
+    if(cell.t===TP){
+      const grp=this.pg[cell.pid];
+      if(grp){grp.cells.forEach(({r:gr,c:gc})=>todo.add(`${gr},${gc}`));delete this.pg[cell.pid];}
+    } else {
+      const col=cell.col,q=[`${r},${c}`],vis=new Set();
+      while(q.length){
+        const k=q.shift();if(vis.has(k))continue;
+        const[cr,cc]=k.split(',').map(Number);
+        if(cr<0||cr>=ROWS||cc<0||cc>=COLS)continue;
+        const g=this.g[cr][cc];
+        if(!g||g.col!==col||g.t===TC||g.t===TK)continue;
+        vis.add(k);todo.add(k);
+        if(g.t===TP){
+          const grp=this.pg[g.pid];
+          if(grp){grp.cells.forEach(({r:gr,c:gc})=>{const nk=`${gr},${gc}`;if(!vis.has(nk))q.push(nk);});delete this.pg[g.pid];}
+        }
+        [[cr-1,cc],[cr+1,cc],[cr,cc-1],[cr,cc+1]].forEach(([nr,nc])=>q.push(`${nr},${nc}`));
+      }
+    }
+    let n=0;
+    todo.forEach(k=>{const[r,c]=k.split(',').map(Number);if(this.g[r][c]){this.g[r][c]=null;n++;}});
+    return n;
+  }
+  activateCrash(){
+    let total=0,changed=true;
+    while(changed){
+      changed=false;
+      outer:for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
+        const gem=this.g[r][c];
+        if(!gem||gem.t!==TC)continue;
+        for(const[nr,nc]of[[r-1,c],[r+1,c],[r,c-1],[r,c+1]]){
+          if(nr<0||nr>=ROWS||nc<0||nc>=COLS)continue;
+          const n=this.g[nr][nc];
+          if(!n||n.t===TC||n.t===TK)continue;
+          if(n.col!==gem.col)continue;
+          const d=this.destroyGroup(nr,nc);
+          this.g[r][c]=null;
+          total+=d+1;changed=true;break outer;
+        }
+      }
+    }
+    return total;
+  }
+  addCounterGems(count){
+    if(count<=0)return;
+    const rows=Math.min(count,4);
+    for(let r=0;r<ROWS-rows;r++)for(let c=0;c<COLS;c++)this.g[r][c]=this.g[r+rows][c];
+    for(let i=0;i<rows;i++){
+      const row=ROWS-rows+i,gap=Math.floor(Math.random()*COLS);
+      for(let c=0;c<COLS;c++)this.g[row][c]=(c===gap)?null:{t:TK,col:'gray',pid:null};
+    }
+  }
+  isOver(){for(let c=0;c<COLS;c++)if(this.g[0][c])return true;return false;}
+  colH(c){for(let r=0;r<ROWS;r++)if(this.g[r][c])return ROWS-r;return 0;}
+}
+
+// ── PIECE ────────────────────────────────────────────────────
+class Piece {
+  constructor(g1,g2){this.g1=g1;this.g2=g2;this.x=2;this.y=0;this.rot=0;}
+  pos(){
+    const[x,y,r]=[this.x,this.y,this.rot];
+    const offsets=[[0,0],[0,-1],[0,0],[1,0],[0,0],[0,1],[0,0],[-1,0]];
+    const[ox1,oy1]=[0,0];
+    const[ox2,oy2]=[[0,-1],[1,0],[0,1],[-1,0]][r];
+    return[{x,y,g:this.g1},{x:x+ox2,y:y+oy2,g:this.g2}];
+  }
+  valid(board,dx=0,dy=0,rot=this.rot){
+    const tmp=new Piece(this.g1,this.g2);
+    tmp.x=this.x+dx;tmp.y=this.y+dy;tmp.rot=rot;
+    for(const{x,y}of tmp.pos()){
+      if(x<0||x>=COLS||y>=ROWS)return false;
+      if(y>=0&&board.at(y,x)!==null)return false;
+    }
+    return true;
+  }
+  place(board){
+    for(const{x,y,g}of this.pos()){
+      if(y>=0&&y<ROWS)board.put(y,x,{...g});
+    }
+  }
+}
+function rndGem(){return{t:Math.random()<0.15?TC:TN,col:COLORS[Math.random()*4|0],pid:null};}
+function newPiece(){return new Piece(rndGem(),rndGem());}
+
+// ── GAME ─────────────────────────────────────────────────────
+class Game {
+  constructor(){
+    this.board=new Board();
+    this.cur=newPiece();this.nxt=newPiece();
+    this.score=0;this.chain=0;this.over=false;
+    this.state='play'; // play|settle|over
+    this.stTimer=0;this.stStep=0;
+    this.gravT=0;this.gravI=750;
+    this.attack=0; // pending counter gems
+    this.onAttack=null;
+  }
+  recv(n){this.attack+=n;}
+  update(dt){
+    if(this.over)return;
+    if(this.state==='settle'){this._settle(dt);return;}
+    if(!this.cur){
+      if(this.attack>0){this.board.addCounterGems(this.attack);this.attack=0;}
+      if(this.board.isOver()){this.over=true;return;}
+      this.cur=this.nxt;this.nxt=newPiece();this.chain=0;
+      if(!this.cur.valid(this.board)){this.over=true;return;}
+    }
+    this.gravT+=dt;
+    if(this.gravT>=this.gravI){this.gravT=0;this._down();}
+  }
+  _down(){
+    if(this.cur.valid(this.board,0,1))this.cur.y++;
+    else this._lock();
+  }
+  _lock(){
+    this.cur.place(this.board);this.cur=null;
+    this.state='settle';this.stTimer=0;this.stStep=0;this.chain=0;
+  }
+  _settle(dt){
+    this.stTimer+=dt;
+    if(this.stTimer<180)return;
+    this.stTimer=0;
+    if(this.stStep===0){this.board.gravity();this.stStep=1;}
+    else if(this.stStep===1){this.board.formPower();this.stStep=2;}
+    else {
+      const d=this.board.activateCrash();
+      if(d>0){
+        this.chain++;
+        const mult=Math.min(this.chain,5);
+        const atk=Math.max(0,Math.floor(d*mult/3));
+        if(atk>0&&this.onAttack)this.onAttack(atk);
+        this.score+=d*mult*100;
+        this.stStep=0;
+      } else {
+        if(this.board.isOver()){this.over=true;}
+        this.state='play';
+      }
+    }
+  }
+  left(){if(this.state==='play'&&this.cur&&this.cur.valid(this.board,-1,0))this.cur.x--;}
+  right(){if(this.state==='play'&&this.cur&&this.cur.valid(this.board,1,0))this.cur.x++;}
+  down(){
+    if(this.state!=='play'||!this.cur)return;
+    if(this.cur.valid(this.board,0,1)){this.cur.y++;this.score+=1;}
+    else this._lock();
+  }
+  rotL(){this._rot(3);}
+  rotR(){this._rot(1);}
+  _rot(d){
+    if(this.state!=='play'||!this.cur)return;
+    const nr=(this.cur.rot+d)%4;
+    if(this.cur.valid(this.board,0,0,nr)){this.cur.rot=nr;}
+    else if(this.cur.valid(this.board,-1,0,nr)){this.cur.x--;this.cur.rot=nr;}
+    else if(this.cur.valid(this.board,1,0,nr)){this.cur.x++;this.cur.rot=nr;}
+  }
+}
+
+// ── AI ───────────────────────────────────────────────────────
+class AI {
+  constructor(game){this.game=game;this.tx=2;this.tr=0;this.ready=false;this.t=0;}
+  update(dt){
+    if(this.game.over||!this.game.cur||this.game.state!=='play')return;
+    if(!this.ready){this._think();this.ready=true;}
+    this.t+=dt;
+    if(this.t<220)return;
+    this.t=0;
+    const p=this.game.cur;
+    if(p.rot!==this.tr){this.game.rotR();return;}
+    if(p.x<this.tx){this.game.right();}
+    else if(p.x>this.tx){this.game.left();}
+    else{
+      // hard drop
+      while(this.game.cur&&this.game.cur.valid(this.game.board,0,1))this.game.cur.y++;
+      this.game._lock();this.ready=false;
+    }
+  }
+  _think(){
+    const p=this.game.cur;
+    let best=-1e9,bx=p.x,br=0;
+    for(let rot=0;rot<4;rot++)for(let x=0;x<COLS;x++){
+      const tp=new Piece({...p.g1},{...p.g2});
+      tp.x=x;tp.y=p.y;tp.rot=rot;
+      if(!tp.valid(this.game.board))continue;
+      while(tp.valid(this.game.board,0,1))tp.y++;
+      const tb=new Board();
+      tb.g=this.game.board.g.map(r=>r.map(c=>c?{...c}:null));
+      tp.place(tb);tb.gravity();tb.formPower();
+      const sc=this._score(tb);
+      if(sc>best){best=sc;bx=x;br=rot;}
+    }
+    this.tx=bx;this.tr=br;
+  }
+  _score(b){
+    let s=0,holes=0,h=0;
+    for(let c=0;c<COLS;c++){
+      const ch=b.colH(c);h+=ch;s-=ch*2;
+      let fill=false;
+      for(let r=0;r<ROWS;r++){if(b.g[r][c])fill=true;else if(fill)holes++;}
+    }
+    s-=holes*8-Object.keys(b.pg).length*15;
+    for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
+      const g=b.g[r][c];if(!g)continue;
+      [[r+1,c],[r,c+1]].forEach(([nr,nc])=>{const n=b.at(nr,nc);if(n&&n.col===g.col)s+=4;});
+    }
+    return s;
+  }
+}
+
+// ── RENDERER ─────────────────────────────────────────────────
+const cv=document.getElementById('cv');
+const ctx=cv.getContext('2d');
+let CELL=32,BW,BH,LX,RX,BY;
+
+function resize(){
+  const hdr=document.getElementById('hdr').offsetHeight;
+  const btns=document.getElementById('btns').offsetHeight;
+  const avW=window.innerWidth,avH=window.innerHeight-hdr-btns-12;
+  // Two boards + gap
+  const cByW=Math.floor(avW/(COLS*2+3));
+  const cByH=Math.floor(avH/(ROWS+2.5));
+  CELL=Math.max(20,Math.min(38,cByW,cByH));
+  BW=COLS*CELL;BH=ROWS*CELL;
+  const gap=CELL*1.5|0;
+  cv.width=BW*2+gap+CELL*2;
+  cv.height=BH+CELL*2.5;
+  LX=CELL*0.5|0;
+  RX=LX+BW+gap;
+  BY=CELL*2|0;
+}
+
+function drawGem(g,px,py,sz,alpha=1){
+  if(!g)return;
+  ctx.save();ctx.globalAlpha=alpha;
+  const pad=sz*0.05,gs=sz-pad*2,x=px+pad,y=py+pad;
+  const pal=PAL[g.col]||PAL.gray;
+  if(g.t===TK){
+    // counter gem - gray brick
+    const gr=ctx.createLinearGradient(x,y,x+gs,y+gs);
+    gr.addColorStop(0,'#bbbbbb');gr.addColorStop(1,'#444444');
+    ctx.fillStyle=gr;
+    ctx.fillRect(x,y,gs,gs);
+    ctx.strokeStyle='#999';ctx.lineWidth=1;ctx.strokeRect(x,y,gs,gs);
+  } else if(g.t===TC){
+    // crash gem - diamond
+    const cx=px+sz/2,cy=py+sz/2,r=gs*0.44;
+    ctx.beginPath();ctx.moveTo(cx,cy-r);ctx.lineTo(cx+r,cy);
+    ctx.lineTo(cx,cy+r);ctx.lineTo(cx-r,cy);ctx.closePath();
+    const gr=ctx.createRadialGradient(cx-r*.2,cy-r*.2,r*.05,cx,cy,r);
+    gr.addColorStop(0,pal[0]);gr.addColorStop(.5,pal[1]);gr.addColorStop(1,pal[2]);
+    ctx.fillStyle=gr;ctx.fill();
+    ctx.strokeStyle=pal[3];ctx.lineWidth=1.5;ctx.stroke();
+    ctx.fillStyle='rgba(255,255,255,0.65)';
+    ctx.beginPath();ctx.arc(cx-r*.25,cy-r*.3,r*.12,0,Math.PI*2);ctx.fill();
+  } else if(g.t===TP){
+    // power gem - glowing square
+    ctx.shadowColor=pal[3];ctx.shadowBlur=sz*.4;
+    const gr=ctx.createLinearGradient(x,y,x+gs,y+gs);
+    gr.addColorStop(0,pal[0]);gr.addColorStop(.5,pal[1]);gr.addColorStop(1,pal[2]);
+    ctx.fillStyle=gr;ctx.fillRect(x,y,gs,gs);
+    ctx.shadowBlur=0;
+    ctx.strokeStyle='rgba(255,255,255,0.9)';ctx.lineWidth=2;ctx.strokeRect(x+1,y+1,gs-2,gs-2);
+    ctx.fillStyle='rgba(255,255,255,0.22)';ctx.fillRect(x,y,gs,gs*.35);
+  } else {
+    // normal gem - rounded square
+    const r=gs*.15;
+    ctx.beginPath();
+    ctx.moveTo(x+r,y);ctx.lineTo(x+gs-r,y);ctx.quadraticCurveTo(x+gs,y,x+gs,y+r);
+    ctx.lineTo(x+gs,y+gs-r);ctx.quadraticCurveTo(x+gs,y+gs,x+gs-r,y+gs);
+    ctx.lineTo(x+r,y+gs);ctx.quadraticCurveTo(x,y+gs,x,y+gs-r);
+    ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);ctx.closePath();
+    const gr=ctx.createLinearGradient(x,y,x+gs,y+gs);
+    gr.addColorStop(0,pal[0]);gr.addColorStop(.5,pal[1]);gr.addColorStop(1,pal[2]);
+    ctx.fillStyle=gr;ctx.fill();
+    ctx.strokeStyle=pal[2];ctx.lineWidth=1;ctx.stroke();
+    ctx.fillStyle='rgba(255,255,255,0.22)';
+    ctx.beginPath();
+    ctx.moveTo(x+r,y);ctx.lineTo(x+gs-r,y);ctx.quadraticCurveTo(x+gs,y,x+gs,y+r);
+    ctx.lineTo(x+gs,y+gs*.32);ctx.lineTo(x,y+gs*.32);ctx.lineTo(x,y+r);
+    ctx.quadraticCurveTo(x,y,x+r,y);ctx.closePath();ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawBoard(game,bx,label){
+  // label & score
+  ctx.fillStyle='#888';ctx.font=`${CELL*.38|0}px Arial`;ctx.textAlign='center';
+  ctx.fillText(label,bx+BW/2,BY-CELL*1.4);
+  ctx.fillStyle='#fff';ctx.font=`bold ${CELL*.5|0}px Arial`;
+  ctx.fillText(game.score,bx+BW/2,BY-CELL*.7);
+  if(game.chain>0){
+    ctx.fillStyle='#ffcc00';ctx.font=`bold ${CELL*.5|0}px Arial`;
+    ctx.fillText(`Chain x${game.chain}!`,bx+BW/2,BY-CELL*.1);
+  }
+  if(game.attack>0){
+    ctx.fillStyle='#ff4444';ctx.font=`bold ${CELL*.45|0}px Arial`;
+    ctx.fillText(`⚠ +${game.attack}`,bx+BW/2,BY-CELL*1.9);
+  }
+  // board bg
+  ctx.fillStyle='#090917';ctx.fillRect(bx,BY,BW,BH);
+  // grid
+  ctx.strokeStyle='rgba(255,255,255,0.04)';ctx.lineWidth=.5;
+  for(let r=0;r<=ROWS;r++){ctx.beginPath();ctx.moveTo(bx,BY+r*CELL);ctx.lineTo(bx+BW,BY+r*CELL);ctx.stroke();}
+  for(let c=0;c<=COLS;c++){ctx.beginPath();ctx.moveTo(bx+c*CELL,BY);ctx.lineTo(bx+c*CELL,BY+BH);ctx.stroke();}
+  // border
+  ctx.strokeStyle='#334466';ctx.lineWidth=2;ctx.strokeRect(bx,BY,BW,BH);
+  // gems
+  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
+    const g=game.board.at(r,c);
+    if(g)drawGem(g,bx+c*CELL,BY+r*CELL,CELL);
+  }
+  // ghost + current piece
+  if(game.cur&&game.state==='play'){
+    const ghost=new Piece(game.cur.g1,game.cur.g2);
+    ghost.x=game.cur.x;ghost.y=game.cur.y;ghost.rot=game.cur.rot;
+    while(ghost.valid(game.board,0,1))ghost.y++;
+    if(ghost.y!==game.cur.y){
+      ghost.pos().forEach(({x,y,g})=>{if(y>=0&&y<ROWS)drawGem(g,bx+x*CELL,BY+y*CELL,CELL,.28);});
+    }
+    game.cur.pos().forEach(({x,y,g})=>{if(y>=0&&y<ROWS)drawGem(g,bx+x*CELL,BY+y*CELL,CELL);});
+  }
+  // next piece
+  ctx.fillStyle='#666';ctx.font=`${CELL*.35|0}px Arial`;ctx.textAlign='left';
+  const nx=bx+BW+4;
+  ctx.fillText('NXT',nx,BY+CELL*.5);
+  if(game.nxt){
+    drawGem(game.nxt.g1,nx,BY+CELL*.6,CELL*.85);
+    drawGem(game.nxt.g2,nx,BY+CELL*.6+CELL*.85,CELL*.85);
+  }
+  // game over overlay
+  if(game.over){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(bx,BY,BW,BH);
+    ctx.fillStyle='#ff4444';ctx.font=`bold ${CELL*.9|0}px Arial Black,Arial`;ctx.textAlign='center';
+    ctx.fillText('LOSE',bx+BW/2,BY+BH/2+CELL*.3);
+  }
+}
+
+function render(pg,cg){
+  ctx.clearRect(0,0,cv.width,cv.height);
+  const bg=ctx.createLinearGradient(0,0,0,cv.height);
+  bg.addColorStop(0,'#0d0d2b');bg.addColorStop(1,'#1a0a2e');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,cv.width,cv.height);
+  drawBoard(pg,LX,'PLAYER');
+  drawBoard(cg,RX,'CPU');
+  // VS
+  ctx.fillStyle='#ffd700';ctx.font=`bold ${CELL*.65|0}px Arial Black,Arial`;
+  ctx.textAlign='center';
+  ctx.fillText('VS',(LX+BW+RX)/2,BY+BH/2);
+}
+
+// ── MAIN ─────────────────────────────────────────────────────
+let PG,CG,AI_,running=false,last=0;
+
+function startGame(){
+  document.getElementById('overlay').style.display='none';
+  resize();
+  PG=new Game();CG=new Game();AI_=new AI(CG);
+  PG.onAttack=n=>CG.recv(n);
+  CG.onAttack=n=>PG.recv(n);
+  running=true;last=performance.now();
+  requestAnimationFrame(loop);
+}
+
+function loop(ts){
+  if(!running)return;
+  const dt=Math.min(ts-last,100);last=ts;
+  PG.update(dt);AI_.update(dt);CG.update(dt);
+  render(PG,CG);
+  if(PG.over||CG.over){
+    running=false;
+    setTimeout(()=>{
+      const ov=document.getElementById('overlay');
+      ov.style.display='flex';
+      const win=PG.over?'CPU WINS!':'YOU WIN!';
+      ov.innerHTML=`<h2>${win}</h2>
+        <p>Your score: ${PG.score}<br>CPU score: ${CG.score}</p>
+        <button id="startBtn" onclick="startGame()" style="margin-top:14px;padding:14px 40px;font-size:18px;font-weight:900;background:linear-gradient(135deg,#ff6b35,#ee0000);border:none;border-radius:14px;color:#fff;cursor:pointer;">▶ PLAY AGAIN</button>`;
+    },1200);
+    return;
+  }
+  requestAnimationFrame(loop);
+}
+
+// ── INPUT ────────────────────────────────────────────────────
+document.addEventListener('keydown',e=>{
+  if(!running||!PG)return;
+  if(e.key==='ArrowLeft')PG.left();
+  else if(e.key==='ArrowRight')PG.right();
+  else if(e.key==='ArrowDown')PG.down();
+  else if(e.key==='z'||e.key==='Z')PG.rotL();
+  else if(e.key==='x'||e.key==='X'||e.key===' ')PG.rotR();
+  e.preventDefault();
+});
+
+function btnHold(el,fn,interval=160){
+  let iv;
+  const start=e=>{e.preventDefault();fn();iv=setInterval(fn,interval);};
+  const stop=()=>clearInterval(iv);
+  el.addEventListener('touchstart',start,{passive:false});
+  el.addEventListener('touchend',stop,{passive:false});
+  el.addEventListener('mousedown',start);
+  ['mouseup','mouseleave'].forEach(ev=>el.addEventListener(ev,stop));
+}
+btnHold(document.getElementById('bL'),()=>{if(running&&PG)PG.left();});
+btnHold(document.getElementById('bR'),()=>{if(running&&PG)PG.right();});
+btnHold(document.getElementById('bD'),()=>{if(running&&PG)PG.down();},80);
+document.getElementById('bRL').addEventListener('touchstart',e=>{e.preventDefault();if(running&&PG)PG.rotL();},{passive:false});
+document.getElementById('bRR').addEventListener('touchstart',e=>{e.preventDefault();if(running&&PG)PG.rotR();},{passive:false});
+document.getElementById('bRL').addEventListener('mousedown',()=>{if(running&&PG)PG.rotL();});
+document.getElementById('bRR').addEventListener('mousedown',()=>{if(running&&PG)PG.rotR();});
+
+window.addEventListener('resize',()=>{if(running){resize();render(PG,CG);}else resize();});
+resize();
+</script>
+</body>
+</html>
