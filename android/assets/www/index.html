@@ -822,19 +822,27 @@ function applyGravity(board) {
 }
 
 function checkPowerGems(board) {
-  let formed=false;
-  for (let r=0;r<ROWS-1;r++) {
-    for (let c=0;c<COLS-1;c++) {
-      const g=board[r][c];
-      if (!g||g.type!==TN) continue;
-      const g2=board[r][c+1], g3=board[r+1][c], g4=board[r+1][c+1];
-      if (g2&&g3&&g4&&g2.type===TN&&g3.type===TN&&g4.type===TN&&
-          g.color===g2.color&&g.color===g3.color&&g.color===g4.color) {
-        board[r][c]={type:TP,color:g.color};
-        board[r][c+1]={type:TP,color:g.color};
-        board[r+1][c]={type:TP,color:g.color};
-        board[r+1][c+1]={type:TP,color:g.color};
-        formed=true;
+  let formed=false, changed=true;
+  // Loop until stable — allows blocks to grow beyond 2x2
+  while (changed) {
+    changed=false;
+    for (let r=0;r<ROWS-1;r++) {
+      for (let c=0;c<COLS-1;c++) {
+        const g=board[r][c];
+        // Accept both normal AND existing power gems so blocks can expand
+        if (!g||(g.type!==TN&&g.type!==TP)) continue;
+        const g2=board[r][c+1], g3=board[r+1][c], g4=board[r+1][c+1];
+        if (!g2||!g3||!g4) continue;
+        if ((g2.type!==TN&&g2.type!==TP)||(g3.type!==TN&&g3.type!==TP)||(g4.type!==TN&&g4.type!==TP)) continue;
+        if (g.color!==g2.color||g.color!==g3.color||g.color!==g4.color) continue;
+        // Only mark changed if at least one cell is still TN (new merge)
+        if (g.type===TN||g2.type===TN||g3.type===TN||g4.type===TN) {
+          board[r][c]={type:TP,color:g.color};
+          board[r][c+1]={type:TP,color:g.color};
+          board[r+1][c]={type:TP,color:g.color};
+          board[r+1][c+1]={type:TP,color:g.color};
+          changed=true; formed=true;
+        }
       }
     }
   }
@@ -1265,6 +1273,29 @@ function drawGem(x, y, w, h, colorName, type) {
 // ============================================================
 // GAME SCREEN
 // ============================================================
+function drawPowerBlock(x, y, w, h, colorName) {
+  const pal=PAL[colorName]||PAL.gray;
+  const pad=2, rad=Math.min(8, w*0.12);
+  ctx.save();
+  ctx.shadowColor=pal[3]; ctx.shadowBlur=20;
+  const gr=ctx.createLinearGradient(x,y,x,y+h);
+  gr.addColorStop(0,pal[0]); gr.addColorStop(0.45,pal[1]); gr.addColorStop(1,pal[2]);
+  ctx.fillStyle=gr;
+  ctx.beginPath(); ctx.roundRect(x+pad,y+pad,w-pad*2,h-pad*2,rad); ctx.fill();
+  ctx.shadowBlur=0;
+  // Bright outer border
+  ctx.strokeStyle='rgba(255,255,255,0.92)'; ctx.lineWidth=2.5;
+  ctx.beginPath(); ctx.roundRect(x+pad+1,y+pad+1,w-pad*2-2,h-pad*2-2,rad-1); ctx.stroke();
+  // Shine strip
+  ctx.fillStyle='rgba(255,255,255,0.32)';
+  ctx.beginPath(); ctx.roundRect(x+pad+4,y+pad+4,w-pad*2-8,Math.max(4,h*0.26),rad-2); ctx.fill();
+  // Faint inner grid lines showing merged cells
+  ctx.strokeStyle='rgba(0,0,0,0.18)'; ctx.lineWidth=0.75;
+  for(let i=1;i<w/CELL;i++){ctx.beginPath();ctx.moveTo(x+i*CELL,y+pad+3);ctx.lineTo(x+i*CELL,y+h-pad-3);ctx.stroke();}
+  for(let i=1;i<h/CELL;i++){ctx.beginPath();ctx.moveTo(x+pad+3,y+i*CELL);ctx.lineTo(x+w-pad-3,y+i*CELL);ctx.stroke();}
+  ctx.restore();
+}
+
 function drawBoard(bi, ox, oy) {
   const board=boards[bi];
   ctx.fillStyle='rgba(0,0,0,0.72)'; ctx.fillRect(ox,oy,BW,BH);
@@ -1273,9 +1304,29 @@ function drawBoard(bi, ox, oy) {
   for (let r=0;r<=ROWS;r++) { ctx.beginPath(); ctx.moveTo(ox,oy+r*CELL); ctx.lineTo(ox+BW,oy+r*CELL); ctx.stroke(); }
   for (let c=0;c<=COLS;c++) { ctx.beginPath(); ctx.moveTo(ox+c*CELL,oy); ctx.lineTo(ox+c*CELL,oy+BH); ctx.stroke(); }
 
+  // Draw non-power gems
   for (let r=0;r<ROWS;r++) for (let c=0;c<COLS;c++) {
-    const g=board[r][c]; if (!g) continue;
+    const g=board[r][c]; if (!g||g.type===TP) continue;
     drawGem(ox+c*CELL,oy+r*CELL,CELL,CELL,g.color,g.type);
+  }
+  // Draw power gem groups as unified blocks
+  const pgSeen=new Set();
+  for (let r=0;r<ROWS;r++) for (let c=0;c<COLS;c++) {
+    const g=board[r][c];
+    if (!g||g.type!==TP||pgSeen.has(r*COLS+c)) continue;
+    const col=g.color; let minR=r,maxR=r,minC=c,maxC=c;
+    const q=[[r,c]];
+    while(q.length){
+      const [qr,qc]=q.shift(); const key=qr*COLS+qc;
+      if(pgSeen.has(key)||qr<0||qr>=ROWS||qc<0||qc>=COLS) continue;
+      const gg=board[qr][qc];
+      if(!gg||gg.type!==TP||gg.color!==col) continue;
+      pgSeen.add(key);
+      minR=Math.min(minR,qr);maxR=Math.max(maxR,qr);
+      minC=Math.min(minC,qc);maxC=Math.max(maxC,qc);
+      q.push([qr-1,qc],[qr+1,qc],[qr,qc-1],[qr,qc+1]);
+    }
+    drawPowerBlock(ox+minC*CELL,oy+minR*CELL,(maxC-minC+1)*CELL,(maxR-minR+1)*CELL,col);
   }
 
   const p=pieces[bi];
