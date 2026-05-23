@@ -768,8 +768,14 @@ const ROTS=[
   [[0,0],[0,-1]]   // 3: vertical up
 ];
 
+// Returns a color STRING — fixes gray-block bug (PAL keys are strings, not numbers)
 function randomColor(charIdx) {
-  return Math.random()<0.3 ? charIdx : Math.floor(Math.random()*4);
+  const idx = Math.random()<0.3 ? charIdx : Math.floor(Math.random()*4);
+  return CHAR_COLORS[idx];
+}
+// Returns {color:string, type:TN|TC} — 15% chance crash gem
+function randomGem(charIdx) {
+  return { color: randomColor(charIdx), type: Math.random()<0.15 ? TC : TN };
 }
 
 let boards=[null,null], pieces=[null,null], nextPieces=[null,null];
@@ -795,12 +801,14 @@ function isValid(board, p) {
 function spawnPiece(bi) {
   const ci=(bi===0)?playerChar:cpuChar;
   if (nextPieces[bi]) {
-    pieces[bi]={c1:nextPieces[bi].c1, c2:nextPieces[bi].c2, x:2, y:0, orient:0};
+    pieces[bi]={c1:nextPieces[bi].c1,t1:nextPieces[bi].t1,
+                c2:nextPieces[bi].c2,t2:nextPieces[bi].t2, x:2,y:0,orient:0};
   } else {
-    pieces[bi]={c1:randomColor(ci), c2:randomColor(ci), x:2, y:0, orient:0};
+    const g1=randomGem(ci),g2=randomGem(ci);
+    pieces[bi]={c1:g1.color,t1:g1.type,c2:g2.color,t2:g2.type, x:2,y:0,orient:0};
   }
-  nextPieces[bi]={c1:randomColor(ci), c2:randomColor(ci)};
-  // Check spawn validity
+  const ng1=randomGem(ci),ng2=randomGem(ci);
+  nextPieces[bi]={c1:ng1.color,t1:ng1.type,c2:ng2.color,t2:ng2.type};
   for (const [cx2,cy2] of getPieceCells(pieces[bi])) {
     if (cy2>=0 && boards[bi][cy2][cx2]) return false;
   }
@@ -991,8 +999,8 @@ function activateSuper(bi) {
 function lockPiece(bi) {
   const p=pieces[bi];
   const cells=getPieceCells(p);
-  if (cells[0][1]>=0&&cells[0][1]<ROWS) boards[bi][cells[0][1]][cells[0][0]]={type:TN,color:p.c1};
-  if (cells[1][1]>=0&&cells[1][1]<ROWS) boards[bi][cells[1][1]][cells[1][0]]={type:TN,color:p.c2};
+  if (cells[0][1]>=0&&cells[0][1]<ROWS) boards[bi][cells[0][1]][cells[0][0]]={type:p.t1||TN,color:p.c1};
+  if (cells[1][1]>=0&&cells[1][1]<ROWS) boards[bi][cells[1][1]][cells[1][0]]={type:p.t2||TN,color:p.c2};
   sfx('place');
   pieces[bi]=null;
   checkPowerGems(boards[bi]);
@@ -1057,8 +1065,8 @@ function doAI() {
       const dropped={...tp,y:ty};
       const sim=boards[1].map(r=>[...r]);
       const cells=getPieceCells(dropped);
-      if (cells[0][1]>=0&&cells[0][1]<ROWS) sim[cells[0][1]][cells[0][0]]={type:TN,color:p.c1};
-      if (cells[1][1]>=0&&cells[1][1]<ROWS) sim[cells[1][1]][cells[1][0]]={type:TN,color:p.c2};
+      if (cells[0][1]>=0&&cells[0][1]<ROWS) sim[cells[0][1]][cells[0][0]]={type:p.t1||TN,color:p.c1};
+      if (cells[1][1]>=0&&cells[1][1]<ROWS) sim[cells[1][1]][cells[1][0]]={type:p.t2||TN,color:p.c2};
       const s=evalBoard(sim);
       if (s>best) { best=s; bX=x; bO=o; }
     }
@@ -1337,14 +1345,14 @@ function drawBoard(bi, ox, oy) {
     if (gY!==p.y) {
       const gc=getPieceCells({...p,y:gY});
       ctx.globalAlpha=0.22;
-      if (gc[0][1]>=0) drawGem(ox+gc[0][0]*CELL,oy+gc[0][1]*CELL,CELL,CELL,CHAR_COLORS[p.c1],TN);
-      if (gc[1][1]>=0) drawGem(ox+gc[1][0]*CELL,oy+gc[1][1]*CELL,CELL,CELL,CHAR_COLORS[p.c2],TN);
+      if (gc[0][1]>=0) drawGem(ox+gc[0][0]*CELL,oy+gc[0][1]*CELL,CELL,CELL,p.c1,p.t1||TN);
+      if (gc[1][1]>=0) drawGem(ox+gc[1][0]*CELL,oy+gc[1][1]*CELL,CELL,CELL,p.c2,p.t2||TN);
       ctx.globalAlpha=1;
     }
     // Active piece
     const ac=getPieceCells(p);
-    if (ac[0][1]>=0) drawGem(ox+ac[0][0]*CELL,oy+ac[0][1]*CELL,CELL,CELL,CHAR_COLORS[p.c1],TN);
-    if (ac[1][1]>=0) drawGem(ox+ac[1][0]*CELL,oy+ac[1][1]*CELL,CELL,CELL,CHAR_COLORS[p.c2],TN);
+    if (ac[0][1]>=0) drawGem(ox+ac[0][0]*CELL,oy+ac[0][1]*CELL,CELL,CELL,p.c1,p.t1||TN);
+    if (ac[1][1]>=0) drawGem(ox+ac[1][0]*CELL,oy+ac[1][1]*CELL,CELL,CELL,p.c2,p.t2||TN);
   }
 
   if (attackWarning[bi]>0) {
@@ -1383,14 +1391,14 @@ function drawHUD() {
   ctx.fillStyle='#aaaacc'; ctx.font=`${Math.min(CELL*0.55,11)}px Arial,sans-serif`; ctx.textAlign='left';
   ctx.fillText('NEXT',LX+BW+3,BY+12);
   if (nextPieces[0]) {
-    drawGem(LX+BW+3,BY+14,nS,nS,CHAR_COLORS[nextPieces[0].c1],TN);
-    drawGem(LX+BW+3,BY+14+nS+2,nS,nS,CHAR_COLORS[nextPieces[0].c2],TN);
+    drawGem(LX+BW+3,BY+14,nS,nS,nextPieces[0].c1,nextPieces[0].t1||TN);
+    drawGem(LX+BW+3,BY+14+nS+2,nS,nS,nextPieces[0].c2,nextPieces[0].t2||TN);
   }
   ctx.textAlign='right';
   ctx.fillText('NEXT',RX-3,BY+12);
   if (nextPieces[1]) {
-    drawGem(RX-nS-3,BY+14,nS,nS,CHAR_COLORS[nextPieces[1].c1],TN);
-    drawGem(RX-nS-3,BY+14+nS+2,nS,nS,CHAR_COLORS[nextPieces[1].c2],TN);
+    drawGem(RX-nS-3,BY+14,nS,nS,nextPieces[1].c1,nextPieces[1].t1||TN);
+    drawGem(RX-nS-3,BY+14+nS+2,nS,nS,nextPieces[1].c2,nextPieces[1].t2||TN);
   }
 }
 
