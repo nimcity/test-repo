@@ -968,6 +968,11 @@ let chainDisplay=[{chain:0,timer:0},{chain:0,timer:0}];
 // ALL CLEAR display
 let allClearDisplay=[{timer:0},{timer:0}];
 
+// Animation system state
+let fallProgress = [0, 0]; // 0.0-1.0 fractional progress toward next row
+const gemBreaks = []; // {x, y, color, timer, maxTimer}
+let spawnFlash = [0, 0]; // countdown timer in seconds
+
 function getPieceCells(p) {
   const r=ROTS[p.orient%4];
   return [ [p.x+r[0][0], p.y+r[0][1]], [p.x+r[1][0], p.y+r[1][1]] ];
@@ -1011,6 +1016,9 @@ function spawnPiece(bi) {
   // Get next piece from queue
   const next = queues[bi].next();
   pieces[bi] = { c1:next.c1, t1:next.t1, c2:next.c2, t2:next.t2, x:2, y:0, orient:0 };
+
+  fallProgress[bi] = 0;
+  spawnFlash[bi] = 0.18;
 
   for (const [cx2,cy2] of getPieceCells(pieces[bi])) {
     if (cy2>=0 && boards[bi][cy2][cx2]) return false;
@@ -1124,6 +1132,13 @@ function processChains(bi, chainStep) {
       const px=(bi===0?LX:RX)+c*CELL+CELL/2;
       const py=BY+r*CELL+CELL/2;
       spawnParticles(px,py,board[r][c].color,6);
+      gemBreaks.push({
+        x: (bi===0?LX:RX) + c*CELL,
+        y: BY + r*CELL,
+        color: board[r][c].color,
+        timer: 1,
+        maxTimer: 0.25
+      });
       destroyed++; board[r][c]=null;
     }
   }
@@ -1239,6 +1254,7 @@ function lockPiece(bi) {
   sfx('place');
   vibrate(15);
   pieces[bi]=null;
+  fallProgress[bi]=0;
   lockDelayActive[bi]=false;
   lockDelayTimer[bi]=0;
   lockMoveCount[bi]=0;
@@ -1336,6 +1352,7 @@ function initGame() {
   gameOver=false; gamePaused=false; gameTime=0; aiTimer=0; attackWarning=[0,0]; superMeter=[0,0];
   chainDisplay=[{chain:0,timer:0},{chain:0,timer:0}];
   allClearDisplay=[{timer:0},{timer:0}];
+  fallProgress=[0,0]; spawnFlash=[0,0]; gemBreaks.length=0;
   updateSuperBtn();
   spawnPiece(0); spawnPiece(1);
 }
@@ -2390,10 +2407,20 @@ function drawBoard(bi, ox, oy) {
       if (gc[1][1]>=0) drawGem(ox+gc[1][0]*CELL,oy+gc[1][1]*CELL,CELL,CELL,p.c2,p.t2||TN);
       ctx.globalAlpha=1;
     }
-    // Active piece
+    // Active piece (with sub-row interpolation for smooth fall)
     const ac=getPieceCells(p);
-    if (ac[0][1]>=0) drawGem(ox+ac[0][0]*CELL,oy+ac[0][1]*CELL,CELL,CELL,p.c1,p.t1||TN);
-    if (ac[1][1]>=0) drawGem(ox+ac[1][0]*CELL,oy+ac[1][1]*CELL,CELL,CELL,p.c2,p.t2||TN);
+    const fp=fallProgress[bi];
+    if (ac[0][1]>=0) drawGem(ox+ac[0][0]*CELL, oy+(ac[0][1]+fp)*CELL, CELL, CELL, p.c1, p.t1||TN);
+    if (ac[1][1]>=0) drawGem(ox+ac[1][0]*CELL, oy+(ac[1][1]+fp)*CELL, CELL, CELL, p.c2, p.t2||TN);
+
+    // Spawn flash outline
+    if (spawnFlash[bi]>0) {
+      const flashA=spawnFlash[bi]/0.18;
+      ctx.strokeStyle=`rgba(255,255,255,${flashA*0.9})`;
+      ctx.lineWidth=3;
+      if (ac[0][1]>=0) { ctx.beginPath(); ctx.roundRect(ox+ac[0][0]*CELL+1, oy+(ac[0][1]+fp)*CELL+1, CELL-2, CELL-2, 3); ctx.stroke(); }
+      if (ac[1][1]>=0) { ctx.beginPath(); ctx.roundRect(ox+ac[1][0]*CELL+1, oy+(ac[1][1]+fp)*CELL+1, CELL-2, CELL-2, 3); ctx.stroke(); }
+    }
   }
 
   // ── Attack warning: dramatic red vignette + pulsing INCOMING! ─
@@ -3345,6 +3372,15 @@ function updateGame(dt) {
 
   // Tick chain display timers
   for (let bi=0;bi<2;bi++) if (chainDisplay[bi].timer>0) chainDisplay[bi].timer-=dt;
+
+  // Update spawn flash timers
+  for (let i=0;i<2;i++) if (spawnFlash[i]>0) spawnFlash[i]-=dt;
+
+  // Update gem break animations
+  for (let i=gemBreaks.length-1;i>=0;i--) {
+    gemBreaks[i].timer -= dt / gemBreaks[i].maxTimer;
+    if (gemBreaks[i].timer<=0) gemBreaks.splice(i,1);
+  }
   // Tick ALL CLEAR display timers
   for (let bi=0;bi<2;bi++) if (allClearDisplay[bi].timer>0) allClearDisplay[bi].timer-=dt;
 
@@ -3381,9 +3417,11 @@ function updateGame(dt) {
       // Piece can fall — cancel lock delay if it was active
       if (lockDelayActive[bi]) { lockDelayActive[bi]=false; lockMoveCount[bi]=0; }
       fallTimers[bi]+=dt*1000;
+      fallProgress[bi]=Math.min(1, fallTimers[bi]/fallDelay[bi]);
       if (fallTimers[bi]>=fallDelay[bi]) {
         fallTimers[bi]=0;
         pieces[bi].y++;
+        fallProgress[bi]=0;
       }
     }
   }
