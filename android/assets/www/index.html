@@ -11,30 +11,58 @@ canvas { display:block; width:100vw; height:100dvh; }
 #controls {
   display:none;
   position:fixed; bottom:0; left:0; right:0;
-  height:128px;
+  height:148px;
   flex-direction:column;
   background:transparent;
   z-index:10;
 }
 #controls.visible { display:flex; }
-#gesture-zone {
+#ctrl-zones {
   flex:1;
-  touch-action:none;
-  cursor:pointer;
-  -webkit-tap-highlight-color:transparent;
+  display:flex;
+  flex-direction:row;
 }
+.ctrl-zone {
+  flex:1;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  touch-action:none;
+  -webkit-tap-highlight-color:transparent;
+  cursor:pointer;
+  position:relative;
+}
+#zone-left { border-right:1px solid rgba(255,255,255,0.06); }
+#zone-right { border-left:1px solid rgba(255,255,255,0.06); }
+.zone-arrow {
+  font-size:28px;
+  color:rgba(255,255,255,0.22);
+  pointer-events:none;
+  transition:color 0.08s;
+}
+.zone-label {
+  font-size:11px;
+  color:rgba(255,255,255,0.18);
+  text-align:center;
+  line-height:1.4;
+  pointer-events:none;
+  font-family:Arial,sans-serif;
+  letter-spacing:0.04em;
+}
+.ctrl-zone.active .zone-arrow { color:rgba(255,255,255,0.8); }
+.ctrl-zone.active .zone-label { color:rgba(255,255,255,0.6); }
 #ctrl-btns {
   display:flex;
   justify-content:center;
   align-items:center;
-  gap:20px;
-  height:52px;
-  padding:0 16px 8px;
+  gap:14px;
+  height:50px;
+  padding:0 14px 8px;
 }
 .btn {
-  height:42px;
+  height:40px;
   background:rgba(255,255,255,0.10);
-  border:1.5px solid rgba(255,255,255,0.3);
+  border:1.5px solid rgba(255,255,255,0.28);
   border-radius:10px;
   color:#fff;
   font-size:14px;
@@ -42,7 +70,7 @@ canvas { display:block; width:100vw; height:100dvh; }
   cursor:pointer;
   -webkit-tap-highlight-color:transparent;
   touch-action:none;
-  padding:0 16px;
+  padding:0 14px;
 }
 .btn:active { background:rgba(255,255,255,0.28); }
 </style>
@@ -50,9 +78,20 @@ canvas { display:block; width:100vw; height:100dvh; }
 <body>
 <canvas id="c"></canvas>
 <div id="controls">
-  <div id="gesture-zone"></div>
+  <div id="ctrl-zones">
+    <div id="zone-left" class="ctrl-zone">
+      <div class="zone-arrow">◀</div>
+    </div>
+    <div id="zone-mid" class="ctrl-zone">
+      <div class="zone-label">TAP<br>ROTATE</div>
+    </div>
+    <div id="zone-right" class="ctrl-zone">
+      <div class="zone-arrow">▶</div>
+    </div>
+  </div>
   <div id="ctrl-btns">
-    <div class="btn" id="btn-super" style="font-weight:900;opacity:0.35;background:rgba(255,200,0,0.1);border-color:rgba(255,200,0,0.3);color:#ffdd00;font-size:13px;min-width:80px;">&#9733; SUPER</div>
+    <div class="btn" id="btn-super" style="font-weight:900;opacity:0.35;background:rgba(255,200,0,0.1);border-color:rgba(255,200,0,0.3);color:#ffdd00;font-size:13px;min-width:80px;">★ SUPER</div>
+    <div class="btn" id="btn-drop" style="font-size:16px;min-width:60px;">▼ DROP</div>
     <div class="btn" id="btn-pause" style="font-size:18px;min-width:52px;">⏸</div>
   </div>
 </div>
@@ -846,9 +885,9 @@ class PieceQueue {
 
   _gem(forceColor) {
     const color = forceColor || this._charColor();
-    // 13% crash gem, but NOT on matched pieces
-    const type = (!forceColor && Math.random() < 0.13) ? TC : TN;
-    return { color, type };
+    const isCrash = !forceColor && Math.random() < 0.22;
+    // Crash gems ALWAYS match the character's primary color so they reliably clear your stack
+    return { color: isCrash ? CHAR_COLORS[this.charIdx] : color, type: isCrash ? TC : TN };
   }
 
   next() {
@@ -988,6 +1027,7 @@ function floodFill(board, r, c, color, visited) {
 }
 
 function processChains(bi, chainStep) {
+  if (gameOver) return;
   const board=boards[bi];
   const toDestroy=new Set();
   let hasCrash=false;
@@ -1483,18 +1523,20 @@ function drawDiff(dt) {
 // ============================================================
 // RESIZE
 // ============================================================
+const FIGHT_STRIP_H = 88; // character fight portraits at top during game
+
 function resize() {
   canvas.width=window.innerWidth; canvas.height=window.innerHeight;
   const W=canvas.width, H=canvas.height;
-  const ctrlH=state===S.GAME?128:0;
-  const avail=H-ctrlH-8;
-  const boardPx=Math.min(W*0.44,avail*(COLS/ROWS)*0.92);
-  CELL=Math.max(16,Math.floor(boardPx/COLS));
-  BW=CELL*COLS; BH=CELL*ROWS;
-  const totW=BW*2+CELL*2;
-  LX=Math.max(2,(W-totW)/2); RX=LX+BW+CELL*2;
-  // Push boards toward top so portrait strip has more room below
-  BY=Math.max(48,(avail-BH)*0.28+48);
+  const ctrlH = state===S.GAME ? 148 : 0;
+  const topH  = state===S.GAME ? FIGHT_STRIP_H : 0;
+  const avail = H - ctrlH - topH - 8;
+  const boardPx = Math.min(W*0.44, avail*(COLS/ROWS)*0.92);
+  CELL = Math.max(14, Math.floor(boardPx/COLS));
+  BW = CELL*COLS; BH = CELL*ROWS;
+  const totW = BW*2 + CELL*2;
+  LX = Math.max(2,(W-totW)/2); RX = LX+BW+CELL*2;
+  BY = topH + Math.max(44, (avail-BH)*0.18 + 44);
   if (state===S.TITLE||state===S.CHARSEL||state===S.DIFF) initParticles();
 }
 
@@ -1679,22 +1721,9 @@ function drawBoard(bi, ox, oy) {
 }
 
 function drawHUD() {
-  const fs=Math.min(CELL*0.62,14);
-  // Player panel above board
-  ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.beginPath(); ctx.roundRect(LX,BY-46,BW,42,4); ctx.fill();
-  ctx.fillStyle='#ffffff'; ctx.font=`bold ${fs}px Arial,sans-serif`; ctx.textAlign='left';
-  ctx.fillText(CHAR_NAMES[playerChar],LX+6,BY-30);
-  ctx.fillStyle='#ffee44'; ctx.font=`bold ${Math.min(CELL*0.8,18)}px Arial,sans-serif`;
-  ctx.fillText(scores[0],LX+6,BY-12);
-  drawSuperBar(LX,BY-6,BW,5,superMeter[0]);
-
-  // CPU panel above board
-  ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.beginPath(); ctx.roundRect(RX,BY-46,BW,42,4); ctx.fill();
-  ctx.fillStyle='#ffffff'; ctx.font=`bold ${fs}px Arial,sans-serif`; ctx.textAlign='right';
-  ctx.fillText(CHAR_NAMES[cpuChar],RX+BW-6,BY-30);
-  ctx.fillStyle='#ffee44'; ctx.font=`bold ${Math.min(CELL*0.8,18)}px Arial,sans-serif`;
-  ctx.fillText(scores[1],RX+BW-6,BY-12);
-  drawSuperBar(RX,BY-6,BW,5,superMeter[1]);
+  // Super meter bars (below top fight strip, above boards)
+  drawSuperBar(LX, BY-8, BW, 6, superMeter[0]);
+  drawSuperBar(RX, BY-8, BW, 6, superMeter[1]);
 
   // Next 2 piece previews (between boards)
   const nS=Math.floor(CELL*0.78), midX=(LX+BW+RX)/2;
@@ -1708,7 +1737,7 @@ function drawHUD() {
 
   // Sound toggle top-right
   const W=canvas.width;
-  const btnW=48, btnH=24, btnX=W-btnW-6, btnY=6;
+  const btnW=48, btnH=24, btnX=W-btnW-6, btnY=FIGHT_STRIP_H+4;
   ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.beginPath(); ctx.roundRect(btnX,btnY,btnW,btnH,6); ctx.fill();
   ctx.strokeStyle='rgba(255,255,255,0.25)'; ctx.lineWidth=1; ctx.beginPath(); ctx.roundRect(btnX,btnY,btnW,btnH,6); ctx.stroke();
   ctx.fillStyle=soundOn?'#88ff88':'#ff8888'; ctx.font=`bold 10px Arial,sans-serif`; ctx.textAlign='center';
@@ -1778,7 +1807,7 @@ function spawnConfetti(W){
 function drawGame(dt) {
   gameTimerDisplay+=dt;
   const W=canvas.width, H=canvas.height;
-  const ctrlTop=H-128;
+  const ctrlTop=H-148;
 
   // Screen shake
   const sx=(shakeTimer>0)?(Math.random()-0.5)*shakeAmt:0;
@@ -1790,47 +1819,45 @@ function drawGame(dt) {
   ctx.fillStyle=getCharBg(playerChar); ctx.globalAlpha=0.22; ctx.fillRect(0,0,W/2,H);
   ctx.fillStyle=getCharBg(cpuChar); ctx.fillRect(W/2,0,W/2,H); ctx.globalAlpha=1;
 
+  // ── Fight strip at top ────────────────────────────────────────
+  const fH = FIGHT_STRIP_H;
+  // Background bar
+  ctx.fillStyle='rgba(0,0,0,0.78)'; ctx.fillRect(0,0,W,fH);
+  ctx.strokeStyle='rgba(255,255,255,0.1)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(0,fH); ctx.lineTo(W,fH); ctx.stroke();
+
+  // Player portrait (left side)
+  const fsc = fH/130;
+  const pPose = attackWarning[0]>60?'hurt':'idle';
+  const cPose = attackWarning[1]>60?'hurt':'idle';
+  drawCharacter(playerChar, W*0.18, fH*0.54, fsc, pPose);
+
+  // CPU portrait (right side, mirrored)
+  ctx.save(); ctx.translate(W,0); ctx.scale(-1,1);
+  drawCharacter(cpuChar, W-W*0.18, fH*0.54, fsc, cPose);
+  ctx.restore();
+
+  // VS text centre
+  ctx.textAlign='center';
+  ctx.font=`bold ${Math.min(fH*0.3,22)}px 'Arial Black',Impact,sans-serif`;
+  ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillText('VS',W/2+1,fH*0.62+1);
+  ctx.fillStyle='#ffee44'; ctx.shadowColor='#ff8800'; ctx.shadowBlur=8;
+  ctx.fillText('VS',W/2,fH*0.62); ctx.shadowBlur=0;
+
+  // Score on each side (inside fight strip)
+  ctx.font=`bold ${Math.min(fH*0.22,16)}px Arial,sans-serif`;
+  ctx.fillStyle='#ffffff'; ctx.textAlign='left';
+  ctx.fillText(CHAR_NAMES[playerChar], W*0.32, fH*0.38);
+  ctx.fillStyle='#ffee44'; ctx.fillText(scores[0], W*0.32, fH*0.68);
+  ctx.textAlign='right';
+  ctx.fillStyle='#ffffff'; ctx.fillText(CHAR_NAMES[cpuChar], W*0.68, fH*0.38);
+  ctx.fillStyle='#ffee44'; ctx.fillText(scores[1], W*0.68, fH*0.68);
+  // ──────────────────────────────────────────────────────────────
+
   // Control area dark overlay drawn on canvas
-  ctx.fillStyle='rgba(0,0,0,0.72)'; ctx.fillRect(0,ctrlTop,W,128);
+  ctx.fillStyle='rgba(0,0,0,0.72)'; ctx.fillRect(0,ctrlTop,W,148);
   ctx.strokeStyle='rgba(255,255,255,0.1)'; ctx.lineWidth=1;
   ctx.beginPath(); ctx.moveTo(0,ctrlTop); ctx.lineTo(W,ctrlTop); ctx.stroke();
-
-  // Portrait strip — draw characters below boards, above gesture zone
-  const portStripY=BY+BH+6;
-  const portStripH=ctrlTop-portStripY-4;
-  if (portStripH>30) {
-    const sc=Math.min(portStripH/130, 0.95);
-    const portCY=portStripY+portStripH*0.52;
-
-    // Player portrait (left board center)
-    const playerPose = attackWarning[0]>60 ? 'hurt' : 'idle';
-    ctx.save();
-    if (attackWarning[0]>60) { ctx.translate(LX+BW/2, portCY); ctx.rotate(-0.08); ctx.translate(-(LX+BW/2),-portCY); }
-    drawCharacter(playerChar, LX+BW/2, portCY, sc, playerPose);
-    ctx.restore();
-
-    // CPU portrait (right board center, mirrored)
-    const cpuPose = attackWarning[1]>60 ? 'hurt' : 'idle';
-    ctx.save();
-    if (attackWarning[1]>60) { ctx.translate(RX+BW/2, portCY); ctx.rotate(0.08); ctx.translate(-(RX+BW/2),-portCY); }
-    ctx.translate(RX+BW/2,0); ctx.scale(-1,1); ctx.translate(-(RX+BW/2),0);
-    drawCharacter(cpuChar, RX+BW/2, portCY, sc, cpuPose);
-    ctx.restore();
-
-    // VS divider
-    const midX=(LX+BW+RX)/2;
-    ctx.fillStyle='rgba(255,255,255,0.06)'; ctx.fillRect(midX-1,portStripY,2,portStripH);
-  }
-
-  // Gesture zone hint (drawn on canvas in the gesture zone area)
-  const gzTop=ctrlTop+4, gzH=72, gzMid=gzTop+gzH*0.45;
-  // Swipe arrows
-  ctx.fillStyle='rgba(255,255,255,0.14)';
-  ctx.font=`${Math.min(W*0.055,20)}px Arial,sans-serif`; ctx.textAlign='center';
-  ctx.fillText('◀  TAP TO ROTATE  ▶',W/2,gzMid);
-  ctx.font=`${Math.min(W*0.028,11)}px Arial,sans-serif`;
-  ctx.fillStyle='rgba(255,255,255,0.08)';
-  ctx.fillText('swipe left/right to move  ·  swipe ↓ to drop',W/2,gzMid+18);
 
   drawBoard(0,LX,BY); drawBoard(1,RX,BY); drawHUD();
   drawParticles();
@@ -2007,47 +2034,88 @@ function endGame(loser) {
   setTimeout(()=>setState(S.RESULT),1200);
 }
 
-// ── Gesture Zone ──────────────────────────────────────────────
-// Continuous drag = column-by-column move (real-time)
-// Quick tap (< 220ms, < 14px) = rotate right
-// Swipe down = hard drop  |  swipe up = rotate left
-let gzState=null;
-const gz=document.getElementById('gesture-zone');
+// ── 3-Zone Virtual Controller ─────────────────────────────────
+// Left zone: DAS left  |  Mid zone: tap=rotate  |  Right zone: DAS right
+// Button row: SUPER | DROP | PAUSE
 
-gz.addEventListener('pointerdown',e=>{
+const DAS_DELAY = 160, DAS_REPEAT = 70;
+const zoneTimers = {};
+
+function startZone(action) {
+  if (zoneTimers[action]) return;
+  initAudio();
+  if (state !== S.GAME || gameOver || gamePaused) return;
+  handleInput(action);
+  zoneTimers[action] = setTimeout(() => {
+    zoneTimers[action + '_interval'] = setInterval(() => {
+      if (state !== S.GAME || gameOver || gamePaused) { stopZone(action); return; }
+      handleInput(action);
+    }, DAS_REPEAT);
+    delete zoneTimers[action];
+  }, DAS_DELAY);
+}
+
+function stopZone(action) {
+  if (zoneTimers[action]) { clearTimeout(zoneTimers[action]); delete zoneTimers[action]; }
+  if (zoneTimers[action + '_interval']) { clearInterval(zoneTimers[action + '_interval']); delete zoneTimers[action + '_interval']; }
+  const el = document.getElementById(action === 'left' ? 'zone-left' : 'zone-right');
+  if (el) el.classList.remove('active');
+}
+
+// Left zone
+const zLeft = document.getElementById('zone-left');
+zLeft.addEventListener('pointerdown', e => {
+  e.preventDefault(); zLeft.setPointerCapture(e.pointerId);
+  zLeft.classList.add('active'); startZone('left');
+});
+zLeft.addEventListener('pointerup', () => stopZone('left'));
+zLeft.addEventListener('pointercancel', () => stopZone('left'));
+zLeft.addEventListener('pointerleave', () => stopZone('left'));
+
+// Right zone
+const zRight = document.getElementById('zone-right');
+zRight.addEventListener('pointerdown', e => {
+  e.preventDefault(); zRight.setPointerCapture(e.pointerId);
+  zRight.classList.add('active'); startZone('right');
+});
+zRight.addEventListener('pointerup', () => stopZone('right'));
+zRight.addEventListener('pointercancel', () => stopZone('right'));
+zRight.addEventListener('pointerleave', () => stopZone('right'));
+
+// Mid zone — tap = rotate right, hold 300ms = rotate left
+const zMid = document.getElementById('zone-mid');
+let midDownT = 0, midHoldTimer = null;
+zMid.addEventListener('pointerdown', e => {
   e.preventDefault(); initAudio();
-  if (state!==S.GAME||gameOver||gamePaused) return;
-  gz.setPointerCapture(e.pointerId);
-  gzState={id:e.pointerId, startX:e.clientX, startY:e.clientY, lastX:e.clientX, accum:0, moved:false, t:Date.now()};
+  if (state !== S.GAME || gameOver || gamePaused) return;
+  zMid.setPointerCapture(e.pointerId);
+  midDownT = Date.now();
+  zMid.classList.add('active');
+  midHoldTimer = setTimeout(() => { handleInput('rotleft'); midHoldTimer = null; }, 300);
 });
-gz.addEventListener('pointermove',e=>{
-  if (!gzState||e.pointerId!==gzState.id) return;
-  if (state!==S.GAME||gameOver||gamePaused) return;
-  const dx=e.clientX-gzState.lastX;
-  // threshold: 90% of one cell width in CSS px (CELL = canvas px = CSS px here)
-  const thr=CELL*0.9;
-  gzState.accum+=dx;
-  while(gzState.accum>=thr){handleInput('right');gzState.accum-=thr;gzState.moved=true;}
-  while(gzState.accum<=-thr){handleInput('left');gzState.accum+=thr;gzState.moved=true;}
-  gzState.lastX=e.clientX;
+zMid.addEventListener('pointerup', () => {
+  zMid.classList.remove('active');
+  if (midHoldTimer) { clearTimeout(midHoldTimer); midHoldTimer = null; handleInput('rotright'); }
 });
-gz.addEventListener('pointerup',e=>{
-  if (!gzState||e.pointerId!==gzState.id) return;
-  const dx=e.clientX-gzState.startX, dy=e.clientY-gzState.startY;
-  const dt=Date.now()-gzState.t;
-  if (!gzState.moved&&Math.abs(dx)<14&&Math.abs(dy)<14&&dt<220) handleInput('rotright');
-  else if (dy>65&&Math.abs(dy)>Math.abs(dx)*1.2) handleInput('harddrop');
-  else if (dy<-55&&Math.abs(dy)>Math.abs(dx)*1.2) handleInput('rotleft');
-  gzState=null;
+zMid.addEventListener('pointercancel', () => {
+  zMid.classList.remove('active');
+  if (midHoldTimer) { clearTimeout(midHoldTimer); midHoldTimer = null; }
 });
-gz.addEventListener('pointercancel',e=>{if(gzState&&e.pointerId===gzState.id)gzState=null;});
 
-document.getElementById('btn-super').addEventListener('pointerdown',e=>{e.preventDefault();initAudio();handleInput('super');});
-document.getElementById('btn-pause').addEventListener('pointerdown',e=>{
+// DROP button
+document.getElementById('btn-drop').addEventListener('pointerdown', e => {
+  e.preventDefault(); initAudio();
+  if (state === S.GAME && !gameOver && !gamePaused) handleInput('harddrop');
+});
+
+document.getElementById('btn-super').addEventListener('pointerdown', e => {
+  e.preventDefault(); initAudio(); handleInput('super');
+});
+document.getElementById('btn-pause').addEventListener('pointerdown', e => {
   e.preventDefault();
-  if (state!==S.GAME||gameOver) return;
-  gamePaused=!gamePaused;
-  document.getElementById('btn-pause').textContent=gamePaused?'▶':'⏸';
+  if (state !== S.GAME || gameOver) return;
+  gamePaused = !gamePaused;
+  document.getElementById('btn-pause').textContent = gamePaused ? '▶' : '⏸';
 });
 
 document.addEventListener('keydown',e=>{
@@ -2109,7 +2177,7 @@ canvas.addEventListener('pointerdown',e=>{
     const tx=e.clientX*(canvas.width/canvas.offsetWidth);
     const ty=e.clientY*(canvas.height/canvas.offsetHeight);
     const W=canvas.width;
-    const btnW=52, btnH=26, btnX=W-btnW-6, btnY=6;
+    const btnW=52, btnH=26, btnX=W-btnW-6, btnY=FIGHT_STRIP_H+4;
     if (tx>=btnX&&tx<=btnX+btnW&&ty>=btnY&&ty<=btnY+btnH) {
       soundOn=!soundOn;
       if (soundOn) { initAudio(); play('battle'); }
@@ -2119,7 +2187,7 @@ canvas.addEventListener('pointerdown',e=>{
   }
 });
 
-// (canvas swipe gestures replaced by gesture-zone — see gz handlers above)
+// (touch input handled by 3-zone virtual controller above)
 
 // ============================================================
 // STATE MACHINE
