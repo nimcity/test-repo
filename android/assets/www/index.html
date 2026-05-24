@@ -2834,30 +2834,78 @@ function drawGame(dt) {
   drawBoard(0,LX,BY); drawBoard(1,RX,BY); drawHUD();
   drawParticles();
 
-  // Chain combo display
+  // Gem break animations
+  for (const gb of gemBreaks) {
+    const t=gb.timer; // 1→0
+    const pal=PAL[gb.color]||PAL.gray;
+    ctx.save();
+    ctx.globalAlpha=t;
+    // Flash white at start, fade to gem color
+    const flashT=Math.max(0,t*2-1); // 1→0 in first half
+    ctx.fillStyle=flashT>0?`rgba(255,255,255,${flashT})`:pal[0];
+    // Scale up then shrink (boom effect)
+    const scale=t<0.5?1+(0.5-t)*0.8:t*0.8+0.2;
+    const s=CELL*scale;
+    ctx.fillRect(gb.x+(CELL-s)/2,gb.y+(CELL-s)/2,s,s);
+    ctx.globalAlpha=1;
+    ctx.restore();
+  }
+
+  // Chain combo display (enhanced)
   for (let bi=0;bi<2;bi++) {
     const cd=chainDisplay[bi];
-    if (cd.timer>0) {
-      const ox=bi===0?LX:RX, alpha=Math.min(cd.timer,0.95);
-      const scl=cd.timer>1.3?1+(cd.timer-1.3)*1.1:1;
-      ctx.save();
-      ctx.globalAlpha=alpha;
-      ctx.translate(ox+BW/2, BY+BH*0.38);
-      ctx.scale(scl,scl);
-      ctx.textAlign='center';
-      const sz=Math.min(CELL*1.4,32);
-      // Shadow layer
-      ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.font=`bold ${sz}px 'Arial Black',Impact,sans-serif`;
-      ctx.fillText(`x${cd.chain} CHAIN!`,2,2);
-      // Glow
-      ctx.shadowColor='#ffee00'; ctx.shadowBlur=24;
-      // Gradient text
-      const tg=ctx.createLinearGradient(-60,-sz,60,sz*0.3);
-      tg.addColorStop(0,'#ffffa0'); tg.addColorStop(0.5,'#ffdd00'); tg.addColorStop(1,'#ff8800');
-      ctx.fillStyle=tg; ctx.fillText(`x${cd.chain} CHAIN!`,0,0);
-      ctx.shadowBlur=0;
-      ctx.restore();
+    if (cd.timer<=0) continue;
+    const ox=bi===0?LX:RX;
+    const alpha=Math.min(cd.timer,0.95);
+    const entryT=Math.max(0,cd.timer-1.4); // first 0.4s = entry burst
+    const scl=1+entryT*2.2; // big then settles
+
+    // Screen flash for big chains
+    if (cd.chain>=3 && cd.timer>1.55) {
+      const flashAlpha=Math.min((cd.timer-1.55)*4,0.35);
+      ctx.fillStyle=cd.chain>=4?`rgba(255,100,0,${flashAlpha})`:`rgba(255,200,0,${flashAlpha})`;
+      ctx.fillRect(ox,BY,BW,BH);
     }
+
+    ctx.save();
+    ctx.globalAlpha=Math.min(alpha,1);
+    ctx.translate(ox+BW/2, BY+BH*0.35);
+    ctx.scale(scl,scl);
+    ctx.textAlign='center';
+
+    const sz=Math.min(CELL*1.5,36);
+    const chainColors=['#ffee00','#ff8800','#ff4400','#ff0088'];
+    const col=chainColors[Math.min(cd.chain-2,3)];
+
+    // Shadow
+    ctx.fillStyle='rgba(0,0,0,0.7)';
+    ctx.font=`bold ${sz}px 'Arial Black',Impact,sans-serif`;
+    ctx.fillText(`x${cd.chain} CHAIN!`,2,2);
+
+    // Glow
+    ctx.shadowColor=col; ctx.shadowBlur=28+8*Math.sin(Date.now()*0.01);
+
+    // Gradient fill
+    const tg=ctx.createLinearGradient(-70,-sz,70,sz*0.4);
+    tg.addColorStop(0,'#ffffff');
+    tg.addColorStop(0.4,col);
+    tg.addColorStop(1,col==='#ffee00'?'#ff8800':'#ff0000');
+    ctx.fillStyle=tg;
+    ctx.fillText(`x${cd.chain} CHAIN!`,0,0);
+    ctx.shadowBlur=0;
+
+    // For x4+: rainbow shimmer
+    if (cd.chain>=4) {
+      const shimX=((Date.now()*0.003)%2)-1;
+      const shim=ctx.createLinearGradient(shimX*70-30,0,shimX*70+30,0);
+      shim.addColorStop(0,'rgba(255,255,255,0)');
+      shim.addColorStop(0.5,'rgba(255,255,255,0.55)');
+      shim.addColorStop(1,'rgba(255,255,255,0)');
+      ctx.fillStyle=shim;
+      ctx.fillText(`x${cd.chain} CHAIN!`,0,0);
+    }
+
+    ctx.restore();
   }
 
   // ALL CLEAR banner display
