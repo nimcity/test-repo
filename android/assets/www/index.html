@@ -1114,6 +1114,7 @@ function lockPiece(bi) {
 
 function addCounterGems(bi, count) {
   if (!count || count<=0) return;
+  if (bi===0) triggerShake(4);
   vibrate([40, 30, 40]);
   const clamped=Math.min(count,COLS*3);
   const rows=Math.max(1,Math.ceil(clamped/COLS));
@@ -1671,10 +1672,50 @@ function drawSuperBar(x, y, w, h, val) {
 }
 
 let gameTimerDisplay=0;
+let shakeTimer=0, shakeAmt=0;
+function triggerShake(amt) { shakeAmt=Math.max(shakeAmt,amt); shakeTimer=Math.max(shakeTimer,amt*3); }
+
+const particles=[];
+function spawnParticles(x,y,color,count){
+  const pal=PAL[color]||PAL.gray;
+  for(let i=0;i<count;i++){
+    const a=Math.random()*Math.PI*2, spd=1.5+Math.random()*3.5;
+    particles.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd-2,life:1,maxLife:0.6+Math.random()*0.5,r:2+Math.random()*4,color:pal[Math.floor(Math.random()*3)]});
+  }
+}
+function updateParticlesFx(dt){
+  for(let i=particles.length-1;i>=0;i--){
+    const p=particles[i];
+    p.x+=p.vx; p.y+=p.vy; p.vy+=0.18; p.life-=dt/p.maxLife;
+    if(p.life<=0) particles.splice(i,1);
+  }
+}
+function drawParticles(){
+  for(const p of particles){
+    ctx.globalAlpha=Math.max(0,p.life*0.9);
+    ctx.fillStyle=p.color;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.r*p.life,0,Math.PI*2); ctx.fill();
+  }
+  ctx.globalAlpha=1;
+}
+
+let confetti=[];
+function spawnConfetti(W){
+  confetti=[];
+  for(let i=0;i<60;i++){
+    confetti.push({x:Math.random()*W,y:-20-Math.random()*200,vx:(Math.random()-0.5)*2,vy:2+Math.random()*3,rot:Math.random()*Math.PI*2,rotV:(Math.random()-0.5)*0.2,color:['#ff4444','#44ff44','#4444ff','#ffff44','#ff44ff'][Math.floor(Math.random()*5)],w:6+Math.random()*8,h:4+Math.random()*5});
+  }
+}
+
 function drawGame(dt) {
   gameTimerDisplay+=dt;
   const W=canvas.width, H=canvas.height;
   const ctrlTop=H-128;
+
+  // Screen shake
+  const sx=(shakeTimer>0)?(Math.random()-0.5)*shakeAmt:0;
+  const sy=(shakeTimer>0)?(Math.random()-0.5)*shakeAmt:0;
+  ctx.save(); ctx.translate(sx,sy);
 
   // Background
   ctx.fillStyle='#080018'; ctx.fillRect(0,0,W,H);
@@ -1722,6 +1763,7 @@ function drawGame(dt) {
   ctx.fillText('swipe left/right to move  ·  swipe ↓ to drop',W/2,gzMid+18);
 
   drawBoard(0,LX,BY); drawBoard(1,RX,BY); drawHUD();
+  drawParticles();
 
   // Chain combo display
   for (let bi=0;bi<2;bi++) {
@@ -1752,6 +1794,7 @@ function drawGame(dt) {
     ctx.fillStyle='#aaaacc'; ctx.font=`${Math.min(W*0.042,18)}px Arial,sans-serif`;
     ctx.fillText('Tap ⏸ to resume',W/2,H*0.55);
   }
+  ctx.restore(); // end shake transform
 }
 
 // ============================================================
@@ -2021,6 +2064,8 @@ function setState(s) {
 // ============================================================
 function updateGame(dt) {
   if (gameOver||gamePaused) return;
+  if(shakeTimer>0){shakeTimer-=dt*1000;if(shakeTimer<=0){shakeAmt=0;shakeTimer=0;}}
+  updateParticlesFx(dt);
   gameTime+=dt;
   const ds=DIFF_SETTINGS[difficulty];
 
