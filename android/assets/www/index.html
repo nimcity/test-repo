@@ -11,38 +11,50 @@ canvas { display:block; width:100vw; height:100dvh; }
 #controls {
   display:none;
   position:fixed; bottom:0; left:0; right:0;
-  height:80px;
-  justify-content:center; align-items:center; gap:10px;
-  background:rgba(0,0,0,0.55);
+  height:128px;
+  flex-direction:column;
+  background:transparent;
   z-index:10;
-  padding:0 10px 10px 10px;
 }
 #controls.visible { display:flex; }
+#gesture-zone {
+  flex:1;
+  touch-action:none;
+  cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+}
+#ctrl-btns {
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  gap:20px;
+  height:52px;
+  padding:0 16px 8px;
+}
 .btn {
-  width:58px; height:58px;
-  background:rgba(255,255,255,0.12);
-  border:2px solid rgba(255,255,255,0.4);
-  border-radius:12px;
+  height:42px;
+  background:rgba(255,255,255,0.10);
+  border:1.5px solid rgba(255,255,255,0.3);
+  border-radius:10px;
   color:#fff;
-  font-size:22px;
+  font-size:14px;
   display:flex; align-items:center; justify-content:center;
   cursor:pointer;
   -webkit-tap-highlight-color:transparent;
   touch-action:none;
+  padding:0 16px;
 }
-.btn:active { background:rgba(255,255,255,0.32); }
+.btn:active { background:rgba(255,255,255,0.28); }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="controls">
-  <div class="btn" id="btn-left">&#9664;</div>
-  <div class="btn" id="btn-rotl">&#8634;</div>
-  <div class="btn" id="btn-down">&#9660;</div>
-  <div class="btn" id="btn-rotr">&#8635;</div>
-  <div class="btn" id="btn-right">&#9654;</div>
-  <div class="btn" id="btn-super" style="width:68px;font-size:13px;font-weight:900;opacity:0.35;background:rgba(255,200,0,0.1);border-color:rgba(255,200,0,0.3);color:#ffdd00;">&#9733;SUPER</div>
-  <div class="btn" id="btn-pause" style="font-size:20px;">⏸</div>
+  <div id="gesture-zone"></div>
+  <div id="ctrl-btns">
+    <div class="btn" id="btn-super" style="font-weight:900;opacity:0.35;background:rgba(255,200,0,0.1);border-color:rgba(255,200,0,0.3);color:#ffdd00;font-size:13px;min-width:80px;">&#9733; SUPER</div>
+    <div class="btn" id="btn-pause" style="font-size:18px;min-width:52px;">⏸</div>
+  </div>
 </div>
 <script>
 'use strict';
@@ -1432,14 +1444,15 @@ function drawDiff(dt) {
 function resize() {
   canvas.width=window.innerWidth; canvas.height=window.innerHeight;
   const W=canvas.width, H=canvas.height;
-  const ctrlH=state===S.GAME?82:0;
-  const avail=H-ctrlH-12;
-  const boardPx=Math.min(W*0.44,avail*(COLS/ROWS)*0.95);
+  const ctrlH=state===S.GAME?128:0;
+  const avail=H-ctrlH-8;
+  const boardPx=Math.min(W*0.44,avail*(COLS/ROWS)*0.92);
   CELL=Math.max(16,Math.floor(boardPx/COLS));
   BW=CELL*COLS; BH=CELL*ROWS;
   const totW=BW*2+CELL*2;
-  LX=(W-totW)/2; RX=LX+BW+CELL*2;
-  BY=Math.max(50,(avail-BH)/2+28);
+  LX=Math.max(2,(W-totW)/2); RX=LX+BW+CELL*2;
+  // Push boards toward top so portrait strip has more room below
+  BY=Math.max(48,(avail-BH)*0.28+48);
   if (state===S.TITLE||state===S.CHARSEL||state===S.DIFF) initParticles();
 }
 
@@ -1508,11 +1521,40 @@ function drawPowerBlock(x, y, w, h, colorName) {
 
 function drawBoard(bi, ox, oy) {
   const board=boards[bi];
-  ctx.fillStyle='rgba(0,0,0,0.72)'; ctx.fillRect(ox,oy,BW,BH);
-  ctx.strokeStyle='rgba(255,255,255,0.22)'; ctx.lineWidth=1; ctx.strokeRect(ox,oy,BW,BH);
-  ctx.strokeStyle='rgba(255,255,255,0.055)'; ctx.lineWidth=0.5;
-  for (let r=0;r<=ROWS;r++) { ctx.beginPath(); ctx.moveTo(ox,oy+r*CELL); ctx.lineTo(ox+BW,oy+r*CELL); ctx.stroke(); }
-  for (let c=0;c<=COLS;c++) { ctx.beginPath(); ctx.moveTo(ox+c*CELL,oy); ctx.lineTo(ox+c*CELL,oy+BH); ctx.stroke(); }
+  const charCol=bi===0?getCharBg(playerChar):getCharBg(cpuChar);
+
+  // Incoming attack counter gems indicator bar (above the board)
+  const buf=attackBuffer[bi];
+  if (buf>0) {
+    const dotW=Math.min(CELL*0.55,12), dotH=dotW*0.7, dotGap=2;
+    const totalDotW=Math.min(buf,(COLS*2))*(dotW+dotGap);
+    let dx=ox+(BW-totalDotW)/2;
+    const dy=oy-dotH-4;
+    for (let i=0;i<Math.min(buf,COLS*2);i++) {
+      ctx.fillStyle=`rgba(180,60,60,${0.7+0.3*Math.sin(Date.now()*0.01+i)})`;
+      ctx.beginPath(); ctx.roundRect(dx,dy,dotW,dotH,2); ctx.fill();
+      dx+=dotW+dotGap;
+    }
+    if (buf>COLS*2) {
+      ctx.fillStyle='#ff6666'; ctx.font=`bold 9px Arial`; ctx.textAlign='left';
+      ctx.fillText(`+${buf-(COLS*2)}`,ox+BW*0.5+totalDotW*0.5+2,dy+dotH*0.75);
+    }
+  }
+
+  // Board background + frame
+  ctx.fillStyle='rgba(0,0,0,0.78)'; ctx.fillRect(ox,oy,BW,BH);
+  // Character-color tinted board edge glow
+  ctx.save();
+  ctx.shadowColor=charCol; ctx.shadowBlur=12;
+  ctx.strokeStyle=charCol; ctx.lineWidth=2.5;
+  ctx.strokeRect(ox-1,oy-1,BW+2,BH+2);
+  ctx.restore();
+  ctx.strokeStyle='rgba(255,255,255,0.18)'; ctx.lineWidth=1; ctx.strokeRect(ox,oy,BW,BH);
+
+  // Grid
+  ctx.strokeStyle='rgba(255,255,255,0.04)'; ctx.lineWidth=0.5;
+  for (let r=1;r<ROWS;r++) { ctx.beginPath(); ctx.moveTo(ox,oy+r*CELL); ctx.lineTo(ox+BW,oy+r*CELL); ctx.stroke(); }
+  for (let c=1;c<COLS;c++) { ctx.beginPath(); ctx.moveTo(ox+c*CELL,oy); ctx.lineTo(ox+c*CELL,oy+BH); ctx.stroke(); }
 
   // Draw non-power gems
   for (let r=0;r<ROWS;r++) for (let c=0;c<COLS;c++) {
@@ -1568,50 +1610,40 @@ function drawBoard(bi, ox, oy) {
 }
 
 function drawHUD() {
-  // Player
-  const pHY=BY-55;
-  drawCharHead(playerChar,LX+26,pHY+26,50);
-  ctx.fillStyle='#ffffff'; ctx.font=`bold ${Math.min(CELL*0.65,15)}px Arial,sans-serif`; ctx.textAlign='left';
-  ctx.fillText(CHAR_NAMES[playerChar],LX+56,pHY+15);
-  ctx.fillStyle='#ffdd44'; ctx.fillText(`${scores[0]}`,LX+56,pHY+32);
-  if (attackBuffer[0]>0) { ctx.fillStyle='#ff5555'; ctx.fillText(`+${attackBuffer[0]}`,LX+56,pHY+48); }
-  // Player super meter bar
-  drawSuperBar(LX, pHY+54, BW, 7, superMeter[0]);
+  const fs=Math.min(CELL*0.62,14);
+  // Player panel above board
+  ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.beginPath(); ctx.roundRect(LX,BY-46,BW,42,4); ctx.fill();
+  ctx.fillStyle='#ffffff'; ctx.font=`bold ${fs}px Arial,sans-serif`; ctx.textAlign='left';
+  ctx.fillText(CHAR_NAMES[playerChar],LX+6,BY-30);
+  ctx.fillStyle='#ffee44'; ctx.font=`bold ${Math.min(CELL*0.8,18)}px Arial,sans-serif`;
+  ctx.fillText(scores[0],LX+6,BY-12);
+  drawSuperBar(LX,BY-6,BW,5,superMeter[0]);
 
-  // CPU
-  const cHY=BY-55;
-  drawCharHead(cpuChar,RX+BW-26,cHY+26,50);
-  ctx.fillStyle='#ffffff'; ctx.textAlign='right';
-  ctx.fillText(CHAR_NAMES[cpuChar],RX+BW-56,cHY+15);
-  ctx.fillStyle='#ffdd44'; ctx.fillText(`${scores[1]}`,RX+BW-56,cHY+32);
-  if (attackBuffer[1]>0) { ctx.fillStyle='#ff5555'; ctx.fillText(`+${attackBuffer[1]}`,RX+BW-56,cHY+48); }
-  // CPU super meter bar
-  drawSuperBar(RX, cHY+54, BW, 7, superMeter[1]);
+  // CPU panel above board
+  ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.beginPath(); ctx.roundRect(RX,BY-46,BW,42,4); ctx.fill();
+  ctx.fillStyle='#ffffff'; ctx.font=`bold ${fs}px Arial,sans-serif`; ctx.textAlign='right';
+  ctx.fillText(CHAR_NAMES[cpuChar],RX+BW-6,BY-30);
+  ctx.fillStyle='#ffee44'; ctx.font=`bold ${Math.min(CELL*0.8,18)}px Arial,sans-serif`;
+  ctx.fillText(scores[1],RX+BW-6,BY-12);
+  drawSuperBar(RX,BY-6,BW,5,superMeter[1]);
 
-  // Next 2 piece previews
-  const nS=Math.floor(CELL*0.82);
-  ctx.fillStyle='#aaaacc'; ctx.font=`${Math.min(CELL*0.55,11)}px Arial,sans-serif`; ctx.textAlign='left';
-  ctx.fillText('NEXT',LX+BW+3,BY+12);
+  // Next 2 piece previews (between boards)
+  const nS=Math.floor(CELL*0.78), midX=(LX+BW+RX)/2;
+  ctx.fillStyle='#888899'; ctx.font=`${Math.min(CELL*0.48,10)}px Arial,sans-serif`; ctx.textAlign='center';
+  ctx.fillText('NEXT',midX,BY+12);
   if (queues[0]) {
     const n0=queues[0].peek(0), n1=queues[0].peek(1);
-    if (n0) { drawGem(LX+BW+3,BY+14,nS,nS,n0.c1,n0.t1||TN); drawGem(LX+BW+3,BY+14+nS+2,nS,nS,n0.c2,n0.t2||TN); }
-    if (n1) { drawGem(LX+BW+3,BY+14+(nS+2)*2+4,nS,nS,n1.c1,n1.t1||TN); drawGem(LX+BW+3,BY+14+(nS+2)*3+4,nS,nS,n1.c2,n1.t2||TN); }
-  }
-  ctx.textAlign='right';
-  ctx.fillText('NEXT',RX-3,BY+12);
-  if (queues[1]) {
-    const n0=queues[1].peek(0), n1=queues[1].peek(1);
-    if (n0) { drawGem(RX-nS-3,BY+14,nS,nS,n0.c1,n0.t1||TN); drawGem(RX-nS-3,BY+14+nS+2,nS,nS,n0.c2,n0.t2||TN); }
-    if (n1) { drawGem(RX-nS-3,BY+14+(nS+2)*2+4,nS,nS,n1.c1,n1.t1||TN); drawGem(RX-nS-3,BY+14+(nS+2)*3+4,nS,nS,n1.c2,n1.t2||TN); }
+    if (n0) { drawGem(midX-nS-2,BY+14,nS,nS,n0.c1,n0.t1||TN); drawGem(midX-nS-2,BY+14+nS+2,nS,nS,n0.c2,n0.t2||TN); }
+    if (n1) { drawGem(midX+2,BY+14,nS,nS,n1.c1,n1.t1||TN); drawGem(midX+2,BY+14+nS+2,nS,nS,n1.c2,n1.t2||TN); }
   }
 
-  // Sound toggle button (top-right of canvas)
+  // Sound toggle top-right
   const W=canvas.width;
-  const btnW=52, btnH=26, btnX=W-btnW-6, btnY=6;
-  ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.beginPath(); ctx.roundRect(btnX,btnY,btnW,btnH,6); ctx.fill();
-  ctx.strokeStyle='rgba(255,255,255,0.3)'; ctx.lineWidth=1; ctx.beginPath(); ctx.roundRect(btnX,btnY,btnW,btnH,6); ctx.stroke();
-  ctx.fillStyle=soundOn?'#88ff88':'#ff8888'; ctx.font=`bold ${10}px Arial,sans-serif`; ctx.textAlign='center';
-  ctx.fillText(soundOn?'♪ ON':'✕ OFF',btnX+btnW/2,btnY+btnH*0.68);
+  const btnW=48, btnH=24, btnX=W-btnW-6, btnY=6;
+  ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.beginPath(); ctx.roundRect(btnX,btnY,btnW,btnH,6); ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,0.25)'; ctx.lineWidth=1; ctx.beginPath(); ctx.roundRect(btnX,btnY,btnW,btnH,6); ctx.stroke();
+  ctx.fillStyle=soundOn?'#88ff88':'#ff8888'; ctx.font=`bold 10px Arial,sans-serif`; ctx.textAlign='center';
+  ctx.fillText(soundOn?'♪ ON':'✕ OFF',btnX+btnW/2,btnY+btnH*0.72);
 }
 
 function drawSuperBar(x, y, w, h, val) {
@@ -1642,9 +1674,53 @@ let gameTimerDisplay=0;
 function drawGame(dt) {
   gameTimerDisplay+=dt;
   const W=canvas.width, H=canvas.height;
-  ctx.fillStyle='#0a0020'; ctx.fillRect(0,0,W,H);
-  ctx.fillStyle=getCharBg(playerChar); ctx.globalAlpha=0.28; ctx.fillRect(0,0,W/2,H);
+  const ctrlTop=H-128;
+
+  // Background
+  ctx.fillStyle='#080018'; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle=getCharBg(playerChar); ctx.globalAlpha=0.22; ctx.fillRect(0,0,W/2,H);
   ctx.fillStyle=getCharBg(cpuChar); ctx.fillRect(W/2,0,W/2,H); ctx.globalAlpha=1;
+
+  // Control area dark overlay drawn on canvas
+  ctx.fillStyle='rgba(0,0,0,0.72)'; ctx.fillRect(0,ctrlTop,W,128);
+  ctx.strokeStyle='rgba(255,255,255,0.1)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(0,ctrlTop); ctx.lineTo(W,ctrlTop); ctx.stroke();
+
+  // Portrait strip — draw characters below boards, above gesture zone
+  const portStripY=BY+BH+6;
+  const portStripH=ctrlTop-portStripY-4;
+  if (portStripH>30) {
+    const sc=Math.min(portStripH/130, 0.95);
+    const portCY=portStripY+portStripH*0.52;
+
+    // Player portrait (left board center)
+    ctx.save();
+    if (attackWarning[0]>60) { ctx.translate(LX+BW/2, portCY); ctx.rotate(-0.08); ctx.translate(-(LX+BW/2),-portCY); }
+    drawCharacter(playerChar, LX+BW/2, portCY, sc, 'idle');
+    ctx.restore();
+
+    // CPU portrait (right board center, mirrored)
+    ctx.save();
+    if (attackWarning[1]>60) { ctx.translate(RX+BW/2, portCY); ctx.rotate(0.08); ctx.translate(-(RX+BW/2),-portCY); }
+    ctx.translate(RX+BW/2,0); ctx.scale(-1,1); ctx.translate(-(RX+BW/2),0);
+    drawCharacter(cpuChar, RX+BW/2, portCY, sc, 'idle');
+    ctx.restore();
+
+    // VS divider
+    const midX=(LX+BW+RX)/2;
+    ctx.fillStyle='rgba(255,255,255,0.06)'; ctx.fillRect(midX-1,portStripY,2,portStripH);
+  }
+
+  // Gesture zone hint (drawn on canvas in the gesture zone area)
+  const gzTop=ctrlTop+4, gzH=72, gzMid=gzTop+gzH*0.45;
+  // Swipe arrows
+  ctx.fillStyle='rgba(255,255,255,0.14)';
+  ctx.font=`${Math.min(W*0.055,20)}px Arial,sans-serif`; ctx.textAlign='center';
+  ctx.fillText('◀  TAP TO ROTATE  ▶',W/2,gzMid);
+  ctx.font=`${Math.min(W*0.028,11)}px Arial,sans-serif`;
+  ctx.fillStyle='rgba(255,255,255,0.08)';
+  ctx.fillText('swipe left/right to move  ·  swipe ↓ to drop',W/2,gzMid+18);
+
   drawBoard(0,LX,BY); drawBoard(1,RX,BY); drawHUD();
 
   // Chain combo display
@@ -1801,22 +1877,41 @@ function endGame(loser) {
   setTimeout(()=>setState(S.RESULT),1200);
 }
 
-// Hold-repeat for buttons
-const holds={};
-function startHold(action,ms) { if (holds[action]) return; handleInput(action); holds[action]=setInterval(()=>handleInput(action),ms); }
-function stopHold(action) { if (holds[action]) { clearInterval(holds[action]); delete holds[action]; } }
+// ── Gesture Zone ──────────────────────────────────────────────
+// Continuous drag = column-by-column move (real-time)
+// Quick tap (< 220ms, < 14px) = rotate right
+// Swipe down = hard drop  |  swipe up = rotate left
+let gzState=null;
+const gz=document.getElementById('gesture-zone');
 
-document.getElementById('btn-left').addEventListener('pointerdown',e=>{e.preventDefault();initAudio();startHold('left',160);});
-document.getElementById('btn-left').addEventListener('pointerup',()=>stopHold('left'));
-document.getElementById('btn-left').addEventListener('pointerleave',()=>stopHold('left'));
-document.getElementById('btn-right').addEventListener('pointerdown',e=>{e.preventDefault();initAudio();startHold('right',160);});
-document.getElementById('btn-right').addEventListener('pointerup',()=>stopHold('right'));
-document.getElementById('btn-right').addEventListener('pointerleave',()=>stopHold('right'));
-document.getElementById('btn-down').addEventListener('pointerdown',e=>{e.preventDefault();initAudio();startHold('down',80);});
-document.getElementById('btn-down').addEventListener('pointerup',()=>stopHold('down'));
-document.getElementById('btn-down').addEventListener('pointerleave',()=>stopHold('down'));
-document.getElementById('btn-rotl').addEventListener('pointerdown',e=>{e.preventDefault();initAudio();handleInput('rotleft');});
-document.getElementById('btn-rotr').addEventListener('pointerdown',e=>{e.preventDefault();initAudio();handleInput('rotright');});
+gz.addEventListener('pointerdown',e=>{
+  e.preventDefault(); initAudio();
+  if (state!==S.GAME||gameOver||gamePaused) return;
+  gz.setPointerCapture(e.pointerId);
+  gzState={id:e.pointerId, startX:e.clientX, startY:e.clientY, lastX:e.clientX, accum:0, moved:false, t:Date.now()};
+});
+gz.addEventListener('pointermove',e=>{
+  if (!gzState||e.pointerId!==gzState.id) return;
+  if (state!==S.GAME||gameOver||gamePaused) return;
+  const dx=e.clientX-gzState.lastX;
+  // threshold: 90% of one cell width in CSS px (CELL = canvas px = CSS px here)
+  const thr=CELL*0.9;
+  gzState.accum+=dx;
+  while(gzState.accum>=thr){handleInput('right');gzState.accum-=thr;gzState.moved=true;}
+  while(gzState.accum<=-thr){handleInput('left');gzState.accum+=thr;gzState.moved=true;}
+  gzState.lastX=e.clientX;
+});
+gz.addEventListener('pointerup',e=>{
+  if (!gzState||e.pointerId!==gzState.id) return;
+  const dx=e.clientX-gzState.startX, dy=e.clientY-gzState.startY;
+  const dt=Date.now()-gzState.t;
+  if (!gzState.moved&&Math.abs(dx)<14&&Math.abs(dy)<14&&dt<220) handleInput('rotright');
+  else if (dy>65&&Math.abs(dy)>Math.abs(dx)*1.2) handleInput('harddrop');
+  else if (dy<-55&&Math.abs(dy)>Math.abs(dx)*1.2) handleInput('rotleft');
+  gzState=null;
+});
+gz.addEventListener('pointercancel',e=>{if(gzState&&e.pointerId===gzState.id)gzState=null;});
+
 document.getElementById('btn-super').addEventListener('pointerdown',e=>{e.preventDefault();initAudio();handleInput('super');});
 document.getElementById('btn-pause').addEventListener('pointerdown',e=>{
   e.preventDefault();
@@ -1894,39 +1989,7 @@ canvas.addEventListener('pointerdown',e=>{
   }
 });
 
-// Swipe gesture controls on canvas
-let touchStart=null;
-const SWIPE_THRESHOLD=30;
-
-canvas.addEventListener('touchstart',e=>{
-  if (state!==S.GAME) return;
-  e.preventDefault();
-  const t=e.touches[0];
-  touchStart={x:t.clientX,y:t.clientY,time:Date.now()};
-},{passive:false});
-
-canvas.addEventListener('touchend',e=>{
-  if (state!==S.GAME||!touchStart) return;
-  e.preventDefault();
-  const t=e.changedTouches[0];
-  const dx=t.clientX-touchStart.x;
-  const dy=t.clientY-touchStart.y;
-  const dt2=Date.now()-touchStart.time;
-  const dist=Math.hypot(dx,dy);
-
-  if (dist<18&&dt2<250) {
-    // Tap: rotate right
-    handleInput('rotright');
-  } else if (Math.abs(dx)>Math.abs(dy)&&Math.abs(dx)>SWIPE_THRESHOLD) {
-    if (dx>0) handleInput('right');
-    else handleInput('left');
-  } else if (dy>SWIPE_THRESHOLD) {
-    handleInput('harddrop');
-  } else if (dy<-SWIPE_THRESHOLD) {
-    handleInput('rotleft');
-  }
-  touchStart=null;
-},{passive:false});
+// (canvas swipe gestures replaced by gesture-zone — see gz handlers above)
 
 // ============================================================
 // STATE MACHINE
