@@ -95,6 +95,10 @@ canvas { display:block; width:100vw; height:100dvh; }
     <div class="btn" id="btn-pause" style="font-size:18px;min-width:52px;">⏸</div>
   </div>
 </div>
+<script src="three.min.js"></script>
+<script src="renderer-fx.js"></script>
+<script src="renderer-stages.js"></script>
+<script src="renderer-core.js"></script>
 <script>
 'use strict';
 // ============================================================
@@ -974,6 +978,9 @@ let fallProgress = [0, 0]; // 0.0-1.0 fractional progress toward next row
 const gemBreaks = []; // {x, y, color, timer, maxTimer}
 let spawnFlash = [0, 0]; // countdown timer in seconds
 
+// WebGL renderer flag — set true after pfGL.init() succeeds
+let glActive = false;
+
 function getPieceCells(p) {
   const r=ROTS[p.orient%4];
   return [ [p.x+r[0][0], p.y+r[0][1]], [p.x+r[1][0], p.y+r[1][1]] ];
@@ -1133,6 +1140,7 @@ function processChains(bi, chainStep) {
       const px=(bi===0?LX:RX)+c*CELL+CELL/2;
       const py=BY+r*CELL+CELL/2;
       spawnParticles(px,py,board[r][c].color,6);
+      if (glActive) pfGL.emitBreak(px, py, board[r][c].color);
       gemBreaks.push({
         x: (bi===0?LX:RX) + c*CELL,
         y: BY + r*CELL,
@@ -1160,6 +1168,9 @@ function processChains(bi, chainStep) {
     const acColor = CHAR_COLORS[charIdx];
     const boardOx = bi === 0 ? LX : RX;
     for (let i = 0; i < 40; i++) spawnParticles(boardOx + BW/2, BY + BH/2, acColor, 1);
+    if (glActive && pfGL.emitAllClear && pfGL.scene) {
+      pfGL.emitAllClear(pfGL.scene, boardOx + BW/2, BY + BH/2, BW, BH);
+    }
   }
 
   const mult=Math.min(chainStep,5);
@@ -2311,6 +2322,10 @@ function resize() {
   }
   BY = topH + Math.max(44, (avail-BH)*0.18 + 44);
   if (state===S.TITLE||state===S.CHARSEL||state===S.DIFF) initParticles();
+  if (glActive && window.pfGL) {
+    pfGL.resize(W, H);
+    if (pfGL.resizeStages) pfGL.resizeStages(W, H, LX, RX, BY, BW, BH);
+  }
 }
 
 // ============================================================
@@ -2596,13 +2611,16 @@ function drawBoard(bi, ox, oy) {
   }
 
   // ── Stage-like board background gradient ─────────────────────
-  const bgGrad=ctx.createLinearGradient(ox,oy,ox,oy+BH);
-  bgGrad.addColorStop(0,'rgba(0,0,0,0.72)');
-  bgGrad.addColorStop(0.35,charCol+'26');   // ~15% opacity hex tint
-  bgGrad.addColorStop(0.7,charCol+'18');    // ~9% opacity hex tint
-  bgGrad.addColorStop(1,'rgba(0,0,0,0.88)');
-  ctx.fillStyle=bgGrad;
-  ctx.fillRect(ox,oy,BW,BH);
+  // When WebGL is active the board backgrounds are rendered by the GL layer.
+  if (!glActive) {
+    const bgGrad=ctx.createLinearGradient(ox,oy,ox,oy+BH);
+    bgGrad.addColorStop(0,'rgba(0,0,0,0.72)');
+    bgGrad.addColorStop(0.35,charCol+'26');
+    bgGrad.addColorStop(0.7,charCol+'18');
+    bgGrad.addColorStop(1,'rgba(0,0,0,0.88)');
+    ctx.fillStyle=bgGrad;
+    ctx.fillRect(ox,oy,BW,BH);
+  }
 
   // ── Board frame: outer dark halo, character-color glow, inner highlight ──
   ctx.save();
@@ -2944,35 +2962,39 @@ function drawGame(dt) {
   ctx.save(); ctx.translate(sx,sy);
 
   // ── Background: dramatic stage-split with vignette ──────────
-  const bgBase = ctx.createLinearGradient(0,0,0,H);
-  bgBase.addColorStop(0,'#050012');
-  bgBase.addColorStop(0.6,'#080018');
-  bgBase.addColorStop(1,'#020008');
-  ctx.fillStyle=bgBase; ctx.fillRect(0,0,W,H);
+  // When WebGL is active the stage backgrounds are rendered below — only draw
+  // a very light overlay so they remain visible through the 2D canvas.
+  if (!glActive) {
+    const bgBase = ctx.createLinearGradient(0,0,0,H);
+    bgBase.addColorStop(0,'#050012');
+    bgBase.addColorStop(0.6,'#080018');
+    bgBase.addColorStop(1,'#020008');
+    ctx.fillStyle=bgBase; ctx.fillRect(0,0,W,H);
 
-  // Left half: player character tint (stronger gradient)
-  const bgL=ctx.createLinearGradient(0,0,W*0.55,0);
-  bgL.addColorStop(0,getCharBg(playerChar)+'55');   // ~33% opacity at edge
-  bgL.addColorStop(0.7,getCharBg(playerChar)+'18'); // ~9% at center-ward
-  bgL.addColorStop(1,'rgba(0,0,0,0)');
-  ctx.fillStyle=bgL; ctx.fillRect(0,0,W*0.55,H);
+    // Left half: player character tint
+    const bgL=ctx.createLinearGradient(0,0,W*0.55,0);
+    bgL.addColorStop(0,getCharBg(playerChar)+'55');
+    bgL.addColorStop(0.7,getCharBg(playerChar)+'18');
+    bgL.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=bgL; ctx.fillRect(0,0,W*0.55,H);
 
-  // Right half: CPU character tint (skip in survival mode)
-  if (!survivalMode && cpuChar>=0) {
-    const bgR=ctx.createLinearGradient(W,0,W*0.45,0);
-    bgR.addColorStop(0,getCharBg(cpuChar)+'55');
-    bgR.addColorStop(0.7,getCharBg(cpuChar)+'18');
-    bgR.addColorStop(1,'rgba(0,0,0,0)');
-    ctx.fillStyle=bgR; ctx.fillRect(W*0.45,0,W*0.55,H);
+    // Right half: CPU character tint
+    if (!survivalMode && cpuChar>=0) {
+      const bgR=ctx.createLinearGradient(W,0,W*0.45,0);
+      bgR.addColorStop(0,getCharBg(cpuChar)+'55');
+      bgR.addColorStop(0.7,getCharBg(cpuChar)+'18');
+      bgR.addColorStop(1,'rgba(0,0,0,0)');
+      ctx.fillStyle=bgR; ctx.fillRect(W*0.45,0,W*0.55,H);
+    }
+
+    // Edge vignette
+    const vigL=ctx.createLinearGradient(0,0,W*0.12,0);
+    vigL.addColorStop(0,'rgba(0,0,0,0.55)'); vigL.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=vigL; ctx.fillRect(0,0,W*0.12,H);
+    const vigR=ctx.createLinearGradient(W,0,W*0.88,0);
+    vigR.addColorStop(0,'rgba(0,0,0,0.55)'); vigR.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=vigR; ctx.fillRect(W*0.88,0,W*0.12,H);
   }
-
-  // Edge vignette (both sides dark)
-  const vigL=ctx.createLinearGradient(0,0,W*0.12,0);
-  vigL.addColorStop(0,'rgba(0,0,0,0.55)'); vigL.addColorStop(1,'rgba(0,0,0,0)');
-  ctx.fillStyle=vigL; ctx.fillRect(0,0,W*0.12,H);
-  const vigR=ctx.createLinearGradient(W,0,W*0.88,0);
-  vigR.addColorStop(0,'rgba(0,0,0,0.55)'); vigR.addColorStop(1,'rgba(0,0,0,0)');
-  ctx.fillStyle=vigR; ctx.fillRect(W*0.88,0,W*0.12,H);
 
   // ── Fight strip at top ────────────────────────────────────────
   const fH = FIGHT_STRIP_H;
@@ -3932,7 +3954,14 @@ function loop(ts) {
   else if (state===S.CHARSEL) drawCharSel(dt);
   else if (state===S.DIFF) drawDiff(dt);
   else if (state===S.VS) drawVS(dt);
-  else if (state===S.GAME) { updateGame(dt); drawGame(dt); }
+  else if (state===S.GAME) {
+    if (glActive && window.pfGL) {
+      if (pfGL.renderStages && pfGL.scene) pfGL.renderStages(pfGL.scene, canvas.width, canvas.height, LX, RX, BY, BW, BH, playerChar, cpuChar);
+      if (pfGL.updateParticles && pfGL.scene) pfGL.updateParticles(pfGL.scene, dt);
+      pfGL.render(dt, state, boards, pieces, LX, RX, BY, CELL, BW, BH, playerChar, cpuChar, fallProgress, spawnFlash, attackWarning, allClearDisplay, superMeter);
+    }
+    updateGame(dt); drawGame(dt);
+  }
   else if (state===S.RESULT) drawResult(dt);
   else if (state===S.ARCADE) { arcadeRoundTimer+=dt; drawArcade(dt); if(arcadeRoundTimer>2.5) setState(S.VS); }
   else if (state===S.ARCADE_END) { updateParticles(dt); drawArcadeEnd(dt); }
@@ -3953,6 +3982,21 @@ try { screen.orientation && screen.orientation.lock && screen.orientation.lock('
 resize();
 initParticles();
 setState(S.TITLE);
+
+// Initialize WebGL renderer layer (behind the Canvas 2D)
+if (window.pfGL) {
+  try {
+    pfGL.init(canvas);
+    if (pfGL.initStages && pfGL.scene) {
+      pfGL.initStages(pfGL.scene);
+    }
+    if (pfGL.initFX && pfGL.renderer) {
+      pfGL.initFX(pfGL.renderer, canvas.width, canvas.height);
+    }
+    if (pfGL.resizeStages) pfGL.resizeStages(canvas.width, canvas.height, LX, RX, BY, BW, BH);
+    glActive = true;
+  } catch(e) { console.warn('WebGL renderer init failed:', e); }
+}
 
 requestAnimationFrame(ts=>{ lastTime=ts; requestAnimationFrame(loop); });
 </script>
