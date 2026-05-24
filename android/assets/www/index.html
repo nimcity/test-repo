@@ -103,7 +103,7 @@ canvas { display:block; width:100vw; height:100dvh; }
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 
-const S = { TITLE:0, CHARSEL:1, DIFF:2, VS:3, GAME:4, RESULT:5 };
+const S = { TITLE:0, CHARSEL:1, DIFF:2, VS:3, GAME:4, RESULT:5, ARCADE:6, ARCADE_END:7 };
 let state = S.TITLE;
 
 let CELL=28, BW=168, BH=336, LX=20, RX=210, BY=40;
@@ -125,6 +125,20 @@ let playerChar = 0, cpuChar = 1;
 let vsTimer = 0;
 let winner = 0;
 let difficulty = 1; // 0=easy, 1=medium, 2=hard
+
+// Arcade ladder mode
+let arcadeMode = false;
+let arcadeRound = 0;
+let arcadeOpponents = [];
+let arcadeRoundTimer = 0;
+let arcadeScoreTotal = 0;
+const ARCADE_DIFF = [0, 0, 1, 2];
+
+// Survival mode
+let survivalMode = false;
+let survivalTime = 0;
+let survivalGems = 0;
+let survivalScore = 0;
 
 const DIFF_SETTINGS = [
   { name:'EASY',   gravity:1400, aiSpeed:600,  aiError:0.40, attackMult:0.5, lockDelay:500, label:'★☆☆', color:'#44cc44' },
@@ -273,6 +287,8 @@ function sfx(name) {
   const t = audioCtx.currentTime;
   if (name==='place') {
     _note(180, t, 0.12, 'square', 0.25);
+  } else if (name==='allclear') {
+    [523,659,784,1047,1319].forEach((hz,i)=>_note(hz,t+i*0.12,0.18,'square',0.3));
   } else if (name==='crash') {
     const osc=audioCtx.createOscillator(), g=audioCtx.createGain();
     osc.type='sawtooth';
@@ -877,10 +893,22 @@ class PieceQueue {
   }
 
   _charColor() {
-    // 35% lean toward character's color
-    return Math.random() < 0.35
-      ? CHAR_COLORS[this.charIdx]
-      : CHAR_COLORS[Math.floor(Math.random()*4)];
+    // Character-specific weighted distributions
+    // Weights: [red, blue, yellow, green] for each character
+    const weights = [
+      [0.40, 0.20, 0.20, 0.20],  // KAI (0): 40% red
+      [0.25, 0.30, 0.20, 0.25],  // MEI (1): 30% blue
+      [0.25, 0.20, 0.35, 0.20],  // RIKU (2): 35% yellow
+      [0.30, 0.20, 0.20, 0.30],  // SHADOW (3): 30% green, 30% red
+    ];
+    const w = weights[this.charIdx] || [0.25, 0.25, 0.25, 0.25];
+    const r = Math.random();
+    let cum = 0;
+    for (let i = 0; i < w.length; i++) {
+      cum += w[i];
+      if (r < cum) return CHAR_COLORS[i];
+    }
+    return CHAR_COLORS[this.charIdx];
   }
 
   _gem(forceColor) {
@@ -937,6 +965,8 @@ const MAX_LOCK_RESETS=8;
 
 // Chain combo display
 let chainDisplay=[{chain:0,timer:0},{chain:0,timer:0}];
+// ALL CLEAR display
+let allClearDisplay=[{timer:0},{timer:0}];
 
 function getPieceCells(p) {
   const r=ROTS[p.orient%4];
@@ -961,6 +991,22 @@ function spawnPiece(bi) {
   lockDelayActive[bi] = false;
   lockDelayTimer[bi] = 0;
   lockMoveCount[bi] = 0;
+
+  // Decrement counter gem counts; convert to playable when reaching 0
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const g = boards[bi][r][c];
+      if (g && g.type === TK) {
+        if (g.count !== undefined && g.count > 0) {
+          g.count--;
+          if (g.count <= 0) {
+            // Convert to a normal gem of a random color
+            boards[bi][r][c] = { type: TN, color: CHAR_COLORS[Math.floor(Math.random() * 4)] };
+          }
+        }
+      }
+    }
+  }
 
   // Get next piece from queue
   const next = queues[bi].next();
@@ -1065,8 +1111,10 @@ function processChains(bi, chainStep) {
   if (toDestroy.size===0) return;
 
   sfx(chainStep>1?'chain':'crash');
-  if (chainStep>1) vibrate(Math.min(chainStep*25, 150));
-  else vibrate(30);
+  if (chainStep===1) vibrate(30);
+  else if (chainStep===2) vibrate([30,20,30]);
+  else if (chainStep===3) vibrate([50,20,50,20,50]);
+  else vibrate([80,20,80,20,80,20,80]);
   if (chainStep>=3) triggerShake(6);
 
   let destroyed=0;
@@ -1082,6 +1130,21 @@ function processChains(bi, chainStep) {
 
   applyGravity(board);
   checkPowerGems(board);
+
+  // ALL CLEAR check — board completely empty after chain
+  if (board.every(row => row.every(cell => !cell))) {
+    const op = 1 - bi;
+    attackBuffer[op] += 12;
+    attackWarning[op] = 120;
+    sfx('allclear');
+    triggerShake(10);
+    vibrate([100,30,100,30,100]);
+    allClearDisplay[bi].timer = 2.5;
+    const charIdx = bi === 0 ? playerChar : cpuChar;
+    const acColor = CHAR_COLORS[charIdx];
+    const boardOx = bi === 0 ? LX : RX;
+    for (let i = 0; i < 40; i++) spawnParticles(boardOx + BW/2, BY + BH/2, acColor, 1);
+  }
 
   const mult=Math.min(chainStep,5);
   const rawAttack=Math.floor(destroyed*mult/3);
@@ -1174,6 +1237,7 @@ function lockPiece(bi) {
   if (cells[0][1]>=0&&cells[0][1]<ROWS) boards[bi][cells[0][1]][cells[0][0]]={type:p.t1||TN,color:p.c1};
   if (cells[1][1]>=0&&cells[1][1]<ROWS) boards[bi][cells[1][1]][cells[1][0]]={type:p.t2||TN,color:p.c2};
   sfx('place');
+  vibrate(15);
   pieces[bi]=null;
   lockDelayActive[bi]=false;
   lockDelayTimer[bi]=0;
@@ -1186,15 +1250,17 @@ function lockPiece(bi) {
 function addCounterGems(bi, count) {
   if (!count || count<=0) return;
   if (bi===0) triggerShake(4);
-  vibrate([40, 30, 40]);
+  vibrate([60, 30, 60]);
   const clamped=Math.min(count,COLS*3);
   const rows=Math.max(1,Math.ceil(clamped/COLS));
   // Shift board up
   for (let r=0;r<ROWS-rows;r++) for (let c=0;c<COLS;c++) boards[bi][r][c]=boards[bi][r+rows][c];
   let rem=clamped;
   for (let r=ROWS-rows;r<ROWS;r++) {
+    // Higher rows show larger count numbers (rows near top have more countdown)
+    const rowCount = Math.ceil(clamped / COLS) + (ROWS - rows - r);
     for (let c=0;c<COLS;c++) {
-      boards[bi][r][c]=rem>0?{type:TK,color:'gray'}:null;
+      boards[bi][r][c]=rem>0?{type:TK,color:'gray',count:rowCount}:null;
       rem--;
     }
   }
@@ -1269,6 +1335,7 @@ function initGame() {
   lockDelayTimer=[0,0]; lockDelayActive=[false,false]; lockMoveCount=[0,0];
   gameOver=false; gamePaused=false; gameTime=0; aiTimer=0; attackWarning=[0,0]; superMeter=[0,0];
   chainDisplay=[{chain:0,timer:0},{chain:0,timer:0}];
+  allClearDisplay=[{timer:0},{timer:0}];
   updateSuperBtn();
   spawnPiece(0); spawnPiece(1);
 }
@@ -1963,7 +2030,7 @@ function resize() {
 // ============================================================
 // GEM DRAWING
 // ============================================================
-function drawGem(x, y, w, h, colorName, type) {
+function drawGem(x, y, w, h, colorName, type, count) {
   if (type===TP) return; // power gems handled by drawPowerBlock
   const pal=PAL[colorName]||PAL.gray;
   ctx.save();
@@ -2111,6 +2178,17 @@ function drawGem(x, y, w, h, colorName, type) {
     ctx.beginPath(); ctx.roundRect(x+1,y+1,w-2,h-2,r); ctx.stroke();
     ctx.strokeStyle='rgba(255,255,255,0.22)'; ctx.lineWidth=0.7;
     ctx.beginPath(); ctx.roundRect(x+2,y+2,w-4,h-4,r); ctx.stroke();
+
+    // Draw countdown number on counter gems
+    if (count !== undefined && count > 0) {
+      const fontSize = Math.min(w*0.55, 13);
+      ctx.font = `bold ${fontSize}px Arial,sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillText(count, x+w/2+1, y+h/2+fontSize*0.38+1);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(count, x+w/2, y+h/2+fontSize*0.38);
+    }
   }
   ctx.restore();
 }
@@ -2276,7 +2354,7 @@ function drawBoard(bi, ox, oy) {
   // ── Draw non-power gems ──────────────────────────────────────
   for (let r=0;r<ROWS;r++) for (let c=0;c<COLS;c++) {
     const g=board[r][c]; if (!g||g.type===TP) continue;
-    drawGem(ox+c*CELL,oy+r*CELL,CELL,CELL,g.color,g.type);
+    drawGem(ox+c*CELL,oy+r*CELL,CELL,CELL,g.color,g.type,g.count);
   }
 
   // ── Draw power gem groups as unified blocks ──────────────────
@@ -2755,6 +2833,43 @@ function drawGame(dt) {
     }
   }
 
+  // ALL CLEAR banner display
+  for (let bi=0;bi<2;bi++) {
+    const ac=allClearDisplay[bi];
+    if (ac.timer>0) {
+      const ox=bi===0?LX:RX;
+      const alpha=Math.min(ac.timer,1.0);
+      const scl=ac.timer>2.0?1+(ac.timer-2.0)*0.8:1;
+      ctx.save();
+      ctx.globalAlpha=alpha;
+      ctx.translate(ox+BW/2, BY+BH*0.5);
+      ctx.scale(scl,scl);
+      ctx.textAlign='center';
+      const sz=Math.min(CELL*1.6,36);
+      // Radial glow behind text
+      const glowR=sz*2.5;
+      const glow=ctx.createRadialGradient(0,0,0,0,0,glowR);
+      glow.addColorStop(0,'rgba(255,200,0,0.55)');
+      glow.addColorStop(0.5,'rgba(255,150,0,0.25)');
+      glow.addColorStop(1,'rgba(0,0,0,0)');
+      ctx.fillStyle=glow;
+      ctx.beginPath(); ctx.arc(0,0,glowR,0,Math.PI*2); ctx.fill();
+      // Shadow
+      ctx.fillStyle='rgba(0,0,0,0.75)'; ctx.font=`bold ${sz}px 'Arial Black',Impact,sans-serif`;
+      ctx.fillText('ALL CLEAR!',3,3);
+      // Gold text
+      ctx.shadowColor='#ffdd00'; ctx.shadowBlur=30;
+      const acGrad=ctx.createLinearGradient(-80,-sz,80,sz*0.3);
+      acGrad.addColorStop(0,'#ffffff');
+      acGrad.addColorStop(0.3,'#ffe866');
+      acGrad.addColorStop(0.7,'#ffcc00');
+      acGrad.addColorStop(1,'#ff8800');
+      ctx.fillStyle=acGrad; ctx.fillText('ALL CLEAR!',0,0);
+      ctx.shadowBlur=0;
+      ctx.restore();
+    }
+  }
+
   // Pause overlay
   if (gamePaused) {
     ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(0,0,W,H);
@@ -3213,7 +3328,7 @@ function setState(s) {
   else if (s===S.RESULT) {
     resultTimer=0; stopMusic();
     saveScore(scores[0]);
-    if (winner===0) { sfx('win'); spawnConfetti(canvas.width); } else sfx('lose');
+    if (winner===0) { sfx('win'); spawnConfetti(canvas.width); vibrate([200,50,100]); } else { sfx('lose'); vibrate([300]); }
     setTimeout(()=>play('title'),900);
   }
 }
@@ -3230,6 +3345,8 @@ function updateGame(dt) {
 
   // Tick chain display timers
   for (let bi=0;bi<2;bi++) if (chainDisplay[bi].timer>0) chainDisplay[bi].timer-=dt;
+  // Tick ALL CLEAR display timers
+  for (let bi=0;bi<2;bi++) if (allClearDisplay[bi].timer>0) allClearDisplay[bi].timer-=dt;
 
   // AI timer uses difficulty's aiSpeed
   aiTimer-=dt*1000;
