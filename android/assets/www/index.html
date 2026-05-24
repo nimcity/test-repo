@@ -139,6 +139,7 @@ let survivalMode = false;
 let survivalTime = 0;
 let survivalGems = 0;
 let survivalScore = 0;
+let lastGameWasSurvival = false;
 
 const DIFF_SETTINGS = [
   { name:'EASY',   gravity:1400, aiSpeed:600,  aiError:0.40, attackMult:0.5, lockDelay:500, label:'★☆☆', color:'#44cc44' },
@@ -1841,6 +1842,232 @@ function drawVS(dt) {
 function getCharBg(idx) { return ['#330000','#000033','#332200','#001a00'][idx]; }
 
 // ============================================================
+// ARCADE ROUND SCREEN
+// ============================================================
+function drawArcade(dt) {
+  const W=canvas.width, H=canvas.height;
+  const t=arcadeRoundTimer;
+
+  // Dark gradient background
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#0a0010'); bg.addColorStop(1,'#000008');
+  ctx.fillStyle=bg; ctx.fillRect(0,0,W,H);
+
+  // Radial glow center
+  const arcGlow=ctx.createRadialGradient(W/2,H*0.45,0,W/2,H*0.45,Math.min(W,H)*0.6);
+  arcGlow.addColorStop(0,'rgba(80,20,180,0.28)'); arcGlow.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=arcGlow; ctx.fillRect(0,0,W,H);
+
+  // Scanlines
+  ctx.save(); ctx.globalAlpha=0.04; ctx.fillStyle='#000';
+  for (let ly=0;ly<H;ly+=3) ctx.fillRect(0,ly,W,1);
+  ctx.restore();
+
+  // Progress dots
+  const dotY=H*0.12;
+  const dotR=Math.min(W*0.022,10);
+  const dotGap=dotR*3;
+  const dotsStartX=W/2-(1.5*dotGap);
+  for (let d=0;d<4;d++) {
+    const ddx=dotsStartX+d*dotGap;
+    const filled=d<=arcadeRound;
+    ctx.save();
+    ctx.fillStyle=filled?'#ffcc00':'rgba(255,255,255,0.2)';
+    if (filled) { ctx.shadowColor='#ffcc00'; ctx.shadowBlur=10; }
+    ctx.beginPath(); ctx.arc(ddx,dotY,dotR,0,Math.PI*2); ctx.fill();
+    ctx.shadowBlur=0;
+    ctx.restore();
+  }
+  ctx.fillStyle='rgba(200,180,100,0.7)'; ctx.font=`bold ${Math.min(W*0.028,11)}px Arial,sans-serif`;
+  ctx.textAlign='center';
+  ctx.fillText(`ROUND ${arcadeRound+1} OF 4`, W/2, dotY+dotR*2.2);
+
+  // Big ROUND N text
+  const roundSize=Math.min(W*0.16,72);
+  const roundY=H*0.3;
+  ctx.textAlign='center';
+  ctx.font=`bold ${roundSize}px 'Arial Black',Impact,sans-serif`;
+  ctx.strokeStyle='rgba(0,0,0,0.9)'; ctx.lineWidth=roundSize*0.08; ctx.lineJoin='round';
+  ctx.strokeText(`ROUND ${arcadeRound+1}`, W/2, roundY);
+  ctx.shadowColor='#ff8800'; ctx.shadowBlur=32+12*Math.sin(t*4);
+  ctx.fillStyle='rgba(255,120,0,0.45)'; ctx.fillText(`ROUND ${arcadeRound+1}`, W/2, roundY);
+  const arcRg=ctx.createLinearGradient(0,roundY-roundSize,0,roundY+roundSize*0.2);
+  arcRg.addColorStop(0,'#ffffff'); arcRg.addColorStop(0.3,'#ffee88'); arcRg.addColorStop(0.7,'#ffaa00'); arcRg.addColorStop(1,'#ff5500');
+  ctx.shadowColor='#ffcc00'; ctx.shadowBlur=20;
+  ctx.fillStyle=arcRg; ctx.fillText(`ROUND ${arcadeRound+1}`, W/2, roundY);
+  ctx.shadowBlur=0;
+
+  // Characters on left and right
+  const arcSc=Math.min(W,H)/340;
+  const charY=H*0.6;
+  const px=W*0.22, ex=W*0.78;
+  const opponent=arcadeOpponents[arcadeRound]!==undefined?arcadeOpponents[arcadeRound]:cpuChar;
+
+  // Player aura
+  const pAura=ctx.createRadialGradient(px,charY,0,px,charY,60*arcSc);
+  pAura.addColorStop(0,PAL[CHAR_COLORS[playerChar]][3]+'66'); pAura.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=pAura; ctx.beginPath(); ctx.arc(px,charY,60*arcSc,0,Math.PI*2); ctx.fill();
+  drawCharacter(playerChar,px,charY,arcSc,'idle');
+
+  // CPU aura
+  const eAura=ctx.createRadialGradient(ex,charY,0,ex,charY,60*arcSc);
+  eAura.addColorStop(0,PAL[CHAR_COLORS[opponent]][3]+'66'); eAura.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=eAura; ctx.beginPath(); ctx.arc(ex,charY,60*arcSc,0,Math.PI*2); ctx.fill();
+  ctx.save(); ctx.translate(W,0); ctx.scale(-1,1);
+  drawCharacter(opponent,W-ex,charY,arcSc,'idle');
+  ctx.restore();
+
+  // Name plates
+  const npW=Math.min(W*0.26,90), npH=Math.min(H*0.04,22);
+  const npY=charY+70*arcSc;
+  for (const [nx,name,col] of [[px,CHAR_NAMES[playerChar],'#ffdd88'],[ex,CHAR_NAMES[opponent],'#88ccff']]) {
+    ctx.fillStyle='rgba(0,0,0,0.7)';
+    ctx.beginPath(); ctx.roundRect(nx-npW/2,npY,npW,npH,4); ctx.fill();
+    ctx.strokeStyle=col; ctx.lineWidth=1.2;
+    ctx.beginPath(); ctx.roundRect(nx-npW/2,npY,npW,npH,4); ctx.stroke();
+    ctx.fillStyle=col; ctx.font=`bold ${Math.min(npH*0.68,13)}px Arial,sans-serif`;
+    ctx.textAlign='center'; ctx.shadowColor=col; ctx.shadowBlur=6;
+    ctx.fillText(name,nx,npY+npH*0.72); ctx.shadowBlur=0;
+  }
+
+  // VS in center
+  const arcVsSize=Math.min(W*0.13,56);
+  const arcVsPulse=1+0.06*Math.sin(t*5);
+  ctx.save(); ctx.translate(W/2,H*0.6); ctx.scale(arcVsPulse,arcVsPulse);
+  ctx.textAlign='center';
+  ctx.font=`bold ${arcVsSize}px 'Arial Black',Impact,sans-serif`;
+  ctx.fillStyle='rgba(0,0,0,0.8)'; ctx.fillText('VS',3,4);
+  ctx.shadowColor='#ff2200'; ctx.shadowBlur=28;
+  const arcVsGr=ctx.createLinearGradient(0,-arcVsSize,0,arcVsSize*0.2);
+  arcVsGr.addColorStop(0,'#ffffff'); arcVsGr.addColorStop(0.4,'#ffee44'); arcVsGr.addColorStop(1,'#ff8800');
+  ctx.fillStyle=arcVsGr; ctx.fillText('VS',0,0);
+  ctx.shadowBlur=0; ctx.restore();
+
+  // Progress bar at bottom showing time until fight
+  const arcBarW=Math.min(W*0.6,240), arcBarH=6;
+  const arcBarX=(W-arcBarW)/2, arcBarY=H*0.9;
+  const arcPct=Math.min(t/2.5,1);
+  ctx.fillStyle='rgba(255,255,255,0.1)';
+  ctx.beginPath(); ctx.roundRect(arcBarX,arcBarY,arcBarW,arcBarH,3); ctx.fill();
+  ctx.fillStyle='#ffcc00';
+  ctx.shadowColor='#ffcc00'; ctx.shadowBlur=8;
+  ctx.beginPath(); ctx.roundRect(arcBarX,arcBarY,arcBarW*arcPct,arcBarH,3); ctx.fill();
+  ctx.shadowBlur=0;
+
+  ctx.fillStyle='rgba(200,200,200,0.5)'; ctx.font=`${Math.min(W*0.028,11)}px Arial,sans-serif`;
+  ctx.textAlign='center'; ctx.fillText('GET READY!',W/2,arcBarY-6);
+}
+
+// ============================================================
+// ARCADE VICTORY SCREEN
+// ============================================================
+function drawArcadeEnd(dt) {
+  resultTimer+=dt;
+  const W=canvas.width, H=canvas.height;
+  const t=resultTimer;
+
+  // Animated dark background with hue shift
+  const hue1=(t*30)%360, hue2=(t*30+120)%360;
+  const aeBg=ctx.createLinearGradient(0,0,W,H);
+  aeBg.addColorStop(0,`hsl(${hue1},60%,8%)`);
+  aeBg.addColorStop(0.5,`hsl(${hue2},50%,6%)`);
+  aeBg.addColorStop(1,`hsl(${hue1},60%,8%)`);
+  ctx.fillStyle=aeBg; ctx.fillRect(0,0,W,H);
+
+  // Radial gold burst
+  const aeR=Math.min(W,H)*0.55;
+  const aeBurst=ctx.createRadialGradient(W/2,H*0.48,0,W/2,H*0.48,aeR);
+  aeBurst.addColorStop(0,`rgba(255,200,0,${0.14+0.07*Math.sin(t*2.5)})`);
+  aeBurst.addColorStop(0.5,`rgba(255,120,0,${0.07+0.04*Math.sin(t*2)})`);
+  aeBurst.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=aeBurst; ctx.fillRect(0,0,W,H);
+
+  // Rotating starburst rays
+  ctx.save(); ctx.translate(W/2,H*0.48); ctx.rotate(t*0.25);
+  for (let ri=0;ri<16;ri++) {
+    const ang=(ri/16)*Math.PI*2;
+    const rLen=Math.min(W,H)*0.45;
+    ctx.save(); ctx.rotate(ang);
+    const aeRay=ctx.createLinearGradient(0,0,0,-rLen);
+    aeRay.addColorStop(0,'rgba(255,200,0,0.14)'); aeRay.addColorStop(1,'rgba(255,200,0,0)');
+    ctx.fillStyle=aeRay;
+    ctx.beginPath(); ctx.moveTo(-rLen*0.03,0); ctx.lineTo(0,-rLen); ctx.lineTo(rLen*0.03,0); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+  ctx.restore();
+
+  // Confetti
+  for (const c of confetti) {
+    c.x+=c.vx; c.y+=c.vy; c.rot+=c.rotV;
+    if (c.y>H+20) { c.y=-20; c.x=Math.random()*W; }
+    ctx.save(); ctx.translate(c.x,c.y); ctx.rotate(c.rot);
+    ctx.globalAlpha=0.85; ctx.fillStyle=c.color;
+    ctx.fillRect(-c.w/2,-c.h/2,c.w,c.h);
+    ctx.globalAlpha=1; ctx.restore();
+  }
+
+  // Player character celebrating large
+  const aeSc=Math.min(W,H)/200;
+  const aeBounce=Math.abs(Math.sin(t*2.8))*9*aeSc;
+  drawCharacter(playerChar,W/2,H*0.52-aeBounce,aeSc*1.6,'celebrate');
+
+  // CHAMPION! text
+  const aeMainSize=Math.min(W*0.14,65);
+  const aeMainY=H*0.13;
+  ctx.textAlign='center';
+  ctx.font=`bold ${aeMainSize}px 'Arial Black',Impact,sans-serif`;
+  ctx.strokeStyle='rgba(0,0,0,0.9)'; ctx.lineWidth=aeMainSize*0.1; ctx.lineJoin='round';
+  ctx.strokeText('CHAMPION!',W/2,aeMainY);
+  ctx.shadowColor='#ff8800'; ctx.shadowBlur=44+18*Math.sin(t*3);
+  ctx.fillStyle='rgba(255,120,0,0.5)'; ctx.fillText('CHAMPION!',W/2,aeMainY);
+  ctx.shadowColor='#ffff00'; ctx.shadowBlur=24;
+  ctx.fillStyle='rgba(255,240,0,0.35)'; ctx.fillText('CHAMPION!',W/2,aeMainY);
+  ctx.shadowBlur=0;
+  const aeShimmer=(Math.sin(t*2.2)+1)*0.5;
+  const aeCg=ctx.createLinearGradient(W/2-aeMainSize*2.5,aeMainY-aeMainSize,W/2+aeMainSize*2.5,aeMainY+aeMainSize*0.2);
+  aeCg.addColorStop(Math.max(0,aeShimmer-0.18),'#cc8800');
+  aeCg.addColorStop(aeShimmer,'#ffffff');
+  aeCg.addColorStop(Math.min(1,aeShimmer+0.18),'#ffdd00');
+  aeCg.addColorStop(1,'#ff8800');
+  ctx.fillStyle=aeCg; ctx.shadowColor='#ffcc00'; ctx.shadowBlur=16;
+  ctx.fillText('CHAMPION!',W/2,aeMainY); ctx.shadowBlur=0;
+  ctx.strokeStyle='rgba(255,255,255,0.5)'; ctx.lineWidth=aeMainSize*0.025;
+  ctx.strokeText('CHAMPION!',W/2,aeMainY);
+
+  // Total score panel
+  const aePanelW=Math.min(W*0.78,320), aePanelH=Math.min(H*0.1,58);
+  const aePanelX=W/2-aePanelW/2, aePanelY=H*0.22;
+  ctx.fillStyle='rgba(0,0,0,0.65)';
+  ctx.beginPath(); ctx.roundRect(aePanelX,aePanelY,aePanelW,aePanelH,8); ctx.fill();
+  ctx.strokeStyle='rgba(255,200,0,0.6)'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.roundRect(aePanelX,aePanelY,aePanelW,aePanelH,8); ctx.stroke();
+  ctx.fillStyle='rgba(200,175,100,0.75)'; ctx.font=`${Math.min(W*0.03,11)}px Arial,sans-serif`;
+  ctx.textAlign='center'; ctx.fillText('TOTAL SCORE',W/2,aePanelY+aePanelH*0.36);
+  ctx.font=`bold ${Math.min(W*0.06,26)}px 'Arial Black',Arial,sans-serif`;
+  ctx.fillStyle='#ffee44'; ctx.shadowColor='#ffcc00'; ctx.shadowBlur=10;
+  ctx.fillText(arcadeScoreTotal,W/2,aePanelY+aePanelH*0.84); ctx.shadowBlur=0;
+
+  // Arcade cleared badge
+  ctx.fillStyle='rgba(255,200,0,0.9)'; ctx.font=`bold ${Math.min(W*0.042,17)}px Arial,sans-serif`;
+  ctx.textAlign='center'; ctx.shadowColor='#ffaa00'; ctx.shadowBlur=12;
+  ctx.fillText('ARCADE CLEARED!',W/2,aePanelY+aePanelH+Math.min(H*0.05,28)); ctx.shadowBlur=0;
+
+  // TAP TO CONTINUE blinking
+  if (Math.floor(t*1.8)%2===0) {
+    const aeTapY=H*0.88;
+    const aeTapSize=Math.min(W*0.048,20);
+    ctx.font=`bold ${aeTapSize}px 'Arial Black',Impact,sans-serif`;
+    ctx.textAlign='center';
+    ctx.strokeStyle='rgba(0,0,0,0.85)'; ctx.lineWidth=aeTapSize*0.1; ctx.lineJoin='round';
+    ctx.strokeText('TAP TO CONTINUE',W/2,aeTapY);
+    ctx.shadowColor='#ffff44'; ctx.shadowBlur=12+4*Math.sin(t*3);
+    const aeTg=ctx.createLinearGradient(0,aeTapY-aeTapSize,0,aeTapY+4);
+    aeTg.addColorStop(0,'#ffffff'); aeTg.addColorStop(0.5,'#ffee88'); aeTg.addColorStop(1,'#ffcc00');
+    ctx.fillStyle=aeTg; ctx.fillText('TAP TO CONTINUE',W/2,aeTapY); ctx.shadowBlur=0;
+  }
+}
+
+// ============================================================
 // DIFFICULTY SELECT SCREEN
 // ============================================================
 let diffHighlight=0;
@@ -2022,6 +2249,40 @@ function drawDiff(dt) {
   ctx.fillStyle='rgba(140,140,170,0.6)'; ctx.font=`${Math.min(W*0.032,12)}px Arial,sans-serif`;
   ctx.textAlign='center';
   ctx.fillText('Tap a card to choose  •  Arrow keys to navigate',W/2,startY+cardH+Math.min(H*0.06,38));
+
+  // ARCADE MODE button
+  const arcBtnW=Math.min(W*0.7,280), arcBtnH=44;
+  const arcBtnX=(W-arcBtnW)/2;
+  const arcBtnY=startY+cardH+Math.min(H*0.06,38)+Math.min(H*0.03,20);
+  const arcBtnGrad=ctx.createLinearGradient(arcBtnX,arcBtnY,arcBtnX,arcBtnY+arcBtnH);
+  arcBtnGrad.addColorStop(0,'rgba(80,50,0,0.9)'); arcBtnGrad.addColorStop(1,'rgba(40,25,0,0.95)');
+  ctx.fillStyle=arcBtnGrad;
+  ctx.beginPath(); ctx.roundRect(arcBtnX,arcBtnY,arcBtnW,arcBtnH,8); ctx.fill();
+  ctx.strokeStyle='rgba(255,200,0,0.7)'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.roundRect(arcBtnX,arcBtnY,arcBtnW,arcBtnH,8); ctx.stroke();
+  const arcBtnTxtSz=Math.min(arcBtnH*0.42,16);
+  ctx.font=`bold ${arcBtnTxtSz}px 'Arial Black',Arial,sans-serif`;
+  ctx.textAlign='center'; ctx.fillStyle='rgba(0,0,0,0.7)';
+  ctx.fillText('⚔ ARCADE MODE',W/2+1,arcBtnY+arcBtnH*0.62+1);
+  ctx.fillStyle='#ffcc00'; ctx.shadowColor='#ff8800'; ctx.shadowBlur=8;
+  ctx.fillText('⚔ ARCADE MODE',W/2,arcBtnY+arcBtnH*0.62); ctx.shadowBlur=0;
+
+  // SURVIVAL button
+  const srvBtnW=arcBtnW, srvBtnH=arcBtnH;
+  const srvBtnX=arcBtnX;
+  const srvBtnY=arcBtnY+arcBtnH+Math.min(H*0.015,10);
+  const srvBtnGrad=ctx.createLinearGradient(srvBtnX,srvBtnY,srvBtnX,srvBtnY+srvBtnH);
+  srvBtnGrad.addColorStop(0,'rgba(30,0,60,0.9)'); srvBtnGrad.addColorStop(1,'rgba(15,0,35,0.95)');
+  ctx.fillStyle=srvBtnGrad;
+  ctx.beginPath(); ctx.roundRect(srvBtnX,srvBtnY,srvBtnW,srvBtnH,8); ctx.fill();
+  ctx.strokeStyle='rgba(180,80,255,0.7)'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.roundRect(srvBtnX,srvBtnY,srvBtnW,srvBtnH,8); ctx.stroke();
+  const srvBtnTxtSz=Math.min(srvBtnH*0.42,16);
+  ctx.font=`bold ${srvBtnTxtSz}px 'Arial Black',Arial,sans-serif`;
+  ctx.textAlign='center'; ctx.fillStyle='rgba(0,0,0,0.7)';
+  ctx.fillText('★ SURVIVAL MODE',W/2+1,srvBtnY+srvBtnH*0.62+1);
+  ctx.fillStyle='#cc88ff'; ctx.shadowColor='#9900ff'; ctx.shadowBlur=8;
+  ctx.fillText('★ SURVIVAL MODE',W/2,srvBtnY+srvBtnH*0.62); ctx.shadowBlur=0;
 }
 
 // ============================================================
@@ -2035,11 +2296,19 @@ function resize() {
   const ctrlH = state===S.GAME ? 148 : 0;
   const topH  = state===S.GAME ? FIGHT_STRIP_H : 0;
   const avail = H - ctrlH - topH - 8;
-  const boardPx = Math.min(W*0.44, avail*(COLS/ROWS)*0.92);
-  CELL = Math.max(14, Math.floor(boardPx/COLS));
-  BW = CELL*COLS; BH = CELL*ROWS;
-  const totW = BW*2 + CELL*2;
-  LX = Math.max(2,(W-totW)/2); RX = LX+BW+CELL*2;
+  if (survivalMode) {
+    // Single board centered — can be wider
+    const boardPx = Math.min(W*0.7, avail*(COLS/ROWS)*0.92);
+    CELL = Math.max(14, Math.floor(boardPx/COLS));
+    BW = CELL*COLS; BH = CELL*ROWS;
+    LX = Math.max(2,(W-BW)/2); RX = LX+BW+CELL*2;
+  } else {
+    const boardPx = Math.min(W*0.44, avail*(COLS/ROWS)*0.92);
+    CELL = Math.max(14, Math.floor(boardPx/COLS));
+    BW = CELL*COLS; BH = CELL*ROWS;
+    const totW = BW*2 + CELL*2;
+    LX = Math.max(2,(W-totW)/2); RX = LX+BW+CELL*2;
+  }
   BY = topH + Math.max(44, (avail-BH)*0.18 + 44);
   if (state===S.TITLE||state===S.CHARSEL||state===S.DIFF) initParticles();
 }
@@ -2471,7 +2740,26 @@ function drawHUD() {
 
   // ── Super meter bars: taller (8px), character-colored ─────────
   drawSuperBar(LX, BY-10, BW, 8, superMeter[0], 0);
-  drawSuperBar(RX, BY-10, BW, 8, superMeter[1], 1);
+  if (!survivalMode) drawSuperBar(RX, BY-10, BW, 8, superMeter[1], 1);
+
+  // In survival mode, show a compact survival status bar above the board
+  if (survivalMode) {
+    const srvSpeedLevel=Math.floor(survivalTime/20)+1;
+    const srvMin=Math.floor(survivalTime/60);
+    const srvSec=Math.floor(survivalTime%60);
+    const srvTimeStr=`${srvMin}:${srvSec.toString().padStart(2,'0')}`;
+    const barW=BW, barH=18, barX=LX, barY=BY-barH-12;
+    ctx.save();
+    ctx.fillStyle='rgba(30,0,60,0.8)';
+    ctx.beginPath(); ctx.roundRect(barX,barY,barW,barH,4); ctx.fill();
+    ctx.strokeStyle='rgba(180,80,255,0.5)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.roundRect(barX,barY,barW,barH,4); ctx.stroke();
+    ctx.font=`bold ${Math.min(barH*0.68,11)}px Arial,sans-serif`;
+    ctx.textAlign='center'; ctx.fillStyle='#cc88ff'; ctx.shadowColor='#9900ff'; ctx.shadowBlur=6;
+    ctx.fillText(`⏱ ${srvTimeStr}   SPEED LV ${srvSpeedLevel}   SCORE ${scores[0]}`, barX+barW/2, barY+barH*0.74);
+    ctx.shadowBlur=0; ctx.restore();
+    return; // skip normal HUD elements that require 2 boards
+  }
 
   // ── Next piece preview box (between boards) ──────────────────
   const midX=(LX+BW+RX)/2;
@@ -2669,12 +2957,14 @@ function drawGame(dt) {
   bgL.addColorStop(1,'rgba(0,0,0,0)');
   ctx.fillStyle=bgL; ctx.fillRect(0,0,W*0.55,H);
 
-  // Right half: CPU character tint
-  const bgR=ctx.createLinearGradient(W,0,W*0.45,0);
-  bgR.addColorStop(0,getCharBg(cpuChar)+'55');
-  bgR.addColorStop(0.7,getCharBg(cpuChar)+'18');
-  bgR.addColorStop(1,'rgba(0,0,0,0)');
-  ctx.fillStyle=bgR; ctx.fillRect(W*0.45,0,W*0.55,H);
+  // Right half: CPU character tint (skip in survival mode)
+  if (!survivalMode && cpuChar>=0) {
+    const bgR=ctx.createLinearGradient(W,0,W*0.45,0);
+    bgR.addColorStop(0,getCharBg(cpuChar)+'55');
+    bgR.addColorStop(0.7,getCharBg(cpuChar)+'18');
+    bgR.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=bgR; ctx.fillRect(W*0.45,0,W*0.55,H);
+  }
 
   // Edge vignette (both sides dark)
   const vigL=ctx.createLinearGradient(0,0,W*0.12,0);
@@ -2701,14 +2991,17 @@ function drawGame(dt) {
     ctx.beginPath(); ctx.moveTo(0,sy2); ctx.lineTo(W,sy2); ctx.stroke();
   }
 
-  // Bottom separator line with character-color split
-  const sepGrad=ctx.createLinearGradient(0,fH,W,fH);
-  sepGrad.addColorStop(0,PAL[CHAR_COLORS[playerChar]][3]);
-  sepGrad.addColorStop(0.48,'rgba(255,255,255,0.25)');
-  sepGrad.addColorStop(0.52,'rgba(255,255,255,0.25)');
-  sepGrad.addColorStop(1,PAL[CHAR_COLORS[cpuChar]][3]);
-  ctx.strokeStyle=sepGrad; ctx.lineWidth=1.5;
-  ctx.beginPath(); ctx.moveTo(0,fH); ctx.lineTo(W,fH); ctx.stroke();
+  // Bottom separator line
+  {
+    const sepGrad=ctx.createLinearGradient(0,fH,W,fH);
+    sepGrad.addColorStop(0,PAL[CHAR_COLORS[playerChar]][3]);
+    sepGrad.addColorStop(0.48,'rgba(255,255,255,0.25)');
+    sepGrad.addColorStop(0.52,'rgba(255,255,255,0.25)');
+    const cpuSepColor=(survivalMode||cpuChar<0)?PAL[CHAR_COLORS[playerChar]][3]:PAL[CHAR_COLORS[cpuChar]][3];
+    sepGrad.addColorStop(1,cpuSepColor);
+    ctx.strokeStyle=sepGrad; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(0,fH); ctx.lineTo(W,fH); ctx.stroke();
+  }
 
   // ── Character portrait boxes ──────────────────────────────────
   const pPose = attackWarning[0]>60?'hurt':'idle';
@@ -2729,21 +3022,23 @@ function drawGame(dt) {
   ctx.restore();
   drawCharacter(playerChar, pBoxX+pBoxW*0.5, pBoxY+pBoxH*0.54, fsc*0.88, pPose);
 
-  // CPU portrait box (right, mirrored)
-  const cBoxW=pBoxW, cBoxH=pBoxH, cBoxX=W-W*0.04-pBoxW, cBoxY=pBoxY;
-  ctx.save();
-  const cBoxBg=ctx.createLinearGradient(cBoxX+cBoxW,cBoxY,cBoxX,cBoxY+cBoxH);
-  cBoxBg.addColorStop(0,getCharBg(cpuChar)+'cc');
-  cBoxBg.addColorStop(1,'rgba(0,0,0,0.6)');
-  ctx.fillStyle=cBoxBg;
-  ctx.beginPath(); ctx.roundRect(cBoxX,cBoxY,cBoxW,cBoxH,4); ctx.fill();
-  ctx.shadowColor=PAL[CHAR_COLORS[cpuChar]][3]; ctx.shadowBlur=8;
-  ctx.strokeStyle=PAL[CHAR_COLORS[cpuChar]][3]; ctx.lineWidth=1.5;
-  ctx.beginPath(); ctx.roundRect(cBoxX,cBoxY,cBoxW,cBoxH,4); ctx.stroke();
-  ctx.restore();
-  ctx.save(); ctx.translate(W,0); ctx.scale(-1,1);
-  drawCharacter(cpuChar, W-cBoxX-cBoxW*0.5, cBoxY+cBoxH*0.54, fsc*0.88, cPose);
-  ctx.restore();
+  // CPU portrait box (right, mirrored) — skip in survival mode
+  if (!survivalMode && cpuChar>=0) {
+    const cBoxW=pBoxW, cBoxH=pBoxH, cBoxX=W-W*0.04-pBoxW, cBoxY=pBoxY;
+    ctx.save();
+    const cBoxBg=ctx.createLinearGradient(cBoxX+cBoxW,cBoxY,cBoxX,cBoxY+cBoxH);
+    cBoxBg.addColorStop(0,getCharBg(cpuChar)+'cc');
+    cBoxBg.addColorStop(1,'rgba(0,0,0,0.6)');
+    ctx.fillStyle=cBoxBg;
+    ctx.beginPath(); ctx.roundRect(cBoxX,cBoxY,cBoxW,cBoxH,4); ctx.fill();
+    ctx.shadowColor=PAL[CHAR_COLORS[cpuChar]][3]; ctx.shadowBlur=8;
+    ctx.strokeStyle=PAL[CHAR_COLORS[cpuChar]][3]; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.roundRect(cBoxX,cBoxY,cBoxW,cBoxH,4); ctx.stroke();
+    ctx.restore();
+    ctx.save(); ctx.translate(W,0); ctx.scale(-1,1);
+    drawCharacter(cpuChar, W-cBoxX-cBoxW*0.5, cBoxY+cBoxH*0.54, fsc*0.88, cPose);
+    ctx.restore();
+  }
 
   // ── Name plates ───────────────────────────────────────────────
   const nameY=fH*0.28, nameH=fH*0.22;
@@ -2762,25 +3057,26 @@ function drawGame(dt) {
   ctx.fillText(CHAR_NAMES[playerChar], pNX+pNW/2, nameY+nameH*0.76);
   ctx.restore();
 
-  // CPU name plate
+  // CPU name plate — skip in survival mode
   const cNW=W*0.18, cNX=W-W*0.155-cNW;
-  ctx.save();
-  ctx.fillStyle=PAL[CHAR_COLORS[cpuChar]][1]+'cc';
-  ctx.beginPath(); ctx.roundRect(cNX,nameY,cNW,nameH,3); ctx.fill();
-  ctx.strokeStyle=PAL[CHAR_COLORS[cpuChar]][0]; ctx.lineWidth=1;
-  ctx.stroke();
-  ctx.font='bold '+nameFontSz+'px Arial,sans-serif'; ctx.textAlign='center';
-  ctx.fillStyle='rgba(0,0,0,0.55)';
-  ctx.fillText(CHAR_NAMES[cpuChar], cNX+cNW/2+1, nameY+nameH*0.76+1);
-  ctx.fillStyle='#ffffff';
-  ctx.fillText(CHAR_NAMES[cpuChar], cNX+cNW/2, nameY+nameH*0.76);
-  ctx.restore();
+  if (!survivalMode && cpuChar>=0) {
+    ctx.save();
+    ctx.fillStyle=PAL[CHAR_COLORS[cpuChar]][1]+'cc';
+    ctx.beginPath(); ctx.roundRect(cNX,nameY,cNW,nameH,3); ctx.fill();
+    ctx.strokeStyle=PAL[CHAR_COLORS[cpuChar]][0]; ctx.lineWidth=1;
+    ctx.stroke();
+    ctx.font='bold '+nameFontSz+'px Arial,sans-serif'; ctx.textAlign='center';
+    ctx.fillStyle='rgba(0,0,0,0.55)';
+    ctx.fillText(CHAR_NAMES[cpuChar], cNX+cNW/2+1, nameY+nameH*0.76+1);
+    ctx.fillStyle='#ffffff';
+    ctx.fillText(CHAR_NAMES[cpuChar], cNX+cNW/2, nameY+nameH*0.76);
+    ctx.restore();
+  }
 
   // ── Score display ─────────────────────────────────────────────
   const scY=fH*0.72, scFontSz=Math.min(fH*0.24,17);
   ctx.font='bold '+scFontSz+"px 'Arial Black',Impact,Arial,sans-serif";
   const playerScoreStr=String(scores[0]);
-  const cpuScoreStr=String(scores[1]);
   // Player score
   ctx.save();
   ctx.textAlign='center';
@@ -2790,40 +3086,59 @@ function drawGame(dt) {
   ctx.fillStyle=PAL[CHAR_COLORS[playerChar]][0];
   ctx.fillText(playerScoreStr, pNX+pNW/2, scY);
   ctx.restore();
-  // CPU score
-  ctx.save();
-  ctx.textAlign='center';
-  ctx.fillStyle='rgba(0,0,0,0.6)';
-  ctx.fillText(cpuScoreStr, cNX+cNW/2+1, scY+1);
-  ctx.shadowColor=PAL[CHAR_COLORS[cpuChar]][3]; ctx.shadowBlur=6;
-  ctx.fillStyle=PAL[CHAR_COLORS[cpuChar]][0];
-  ctx.fillText(cpuScoreStr, cNX+cNW/2, scY);
-  ctx.restore();
+  // CPU score — skip in survival mode
+  if (!survivalMode && cpuChar>=0) {
+    const cpuScoreStr=String(scores[1]);
+    ctx.save();
+    ctx.textAlign='center';
+    ctx.fillStyle='rgba(0,0,0,0.6)';
+    ctx.fillText(cpuScoreStr, cNX+cNW/2+1, scY+1);
+    ctx.shadowColor=PAL[CHAR_COLORS[cpuChar]][3]; ctx.shadowBlur=6;
+    ctx.fillStyle=PAL[CHAR_COLORS[cpuChar]][0];
+    ctx.fillText(cpuScoreStr, cNX+cNW/2, scY);
+    ctx.restore();
+  }
 
-  // ── VS badge in center ────────────────────────────────────────
-  const vsAnim=0.88+0.12*Math.sin(now2*0.004);
-  const vsFontSz=Math.min(fH*0.34,26);
-  ctx.save();
-  ctx.translate(W/2, fH*0.56);
-  ctx.scale(vsAnim, vsAnim);
-  ctx.textAlign='center';
-  // Dark plate behind VS
-  ctx.fillStyle='rgba(0,0,0,0.55)';
-  ctx.beginPath(); ctx.roundRect(-20,-vsFontSz*0.85,40,vsFontSz*1.1,4); ctx.fill();
-  // VS text shadow
-  ctx.font='bold '+vsFontSz+"px 'Arial Black',Impact,sans-serif";
-  ctx.fillStyle='rgba(0,0,0,0.7)';
-  ctx.fillText('VS',1,1);
-  // VS text with gradient
-  const vsGr=ctx.createLinearGradient(0,-vsFontSz,0,vsFontSz*0.3);
-  vsGr.addColorStop(0,'#ffffff');
-  vsGr.addColorStop(0.4,'#ffee44');
-  vsGr.addColorStop(1,'#ff8800');
-  ctx.fillStyle=vsGr;
-  ctx.shadowColor='#ff8800'; ctx.shadowBlur=10*vsAnim;
-  ctx.fillText('VS',0,0);
-  ctx.shadowBlur=0;
-  ctx.restore();
+  // ── VS badge in center (or SURVIVAL time in survival mode) ────
+  if (survivalMode) {
+    // Survival: show time survived in center of strip
+    const srvSpeedLevel=Math.floor(survivalTime/20)+1;
+    const srvMin=Math.floor(survivalTime/60);
+    const srvSec=Math.floor(survivalTime%60);
+    const srvTimeStr=`${srvMin}:${srvSec.toString().padStart(2,'0')}`;
+    ctx.save();
+    ctx.textAlign='center';
+    const srvFontSz=Math.min(fH*0.22,16);
+    ctx.font='bold '+srvFontSz+"px Arial,sans-serif";
+    ctx.fillStyle='rgba(0,0,0,0.6)';
+    ctx.fillText(`⏱ ${srvTimeStr}  LV ${srvSpeedLevel}`, W/2+1, fH*0.48+1);
+    ctx.shadowColor='#cc88ff'; ctx.shadowBlur=8;
+    ctx.fillStyle='#cc88ff';
+    ctx.fillText(`⏱ ${srvTimeStr}  LV ${srvSpeedLevel}`, W/2, fH*0.48);
+    ctx.shadowBlur=0; ctx.restore();
+  } else {
+    // ── VS badge in center ────────────────────────────────────────
+    const vsAnim=0.88+0.12*Math.sin(now2*0.004);
+    const vsFontSz=Math.min(fH*0.34,26);
+    ctx.save();
+    ctx.translate(W/2, fH*0.56);
+    ctx.scale(vsAnim, vsAnim);
+    ctx.textAlign='center';
+    ctx.fillStyle='rgba(0,0,0,0.55)';
+    ctx.beginPath(); ctx.roundRect(-20,-vsFontSz*0.85,40,vsFontSz*1.1,4); ctx.fill();
+    ctx.font='bold '+vsFontSz+"px 'Arial Black',Impact,sans-serif";
+    ctx.fillStyle='rgba(0,0,0,0.7)';
+    ctx.fillText('VS',1,1);
+    const vsGr=ctx.createLinearGradient(0,-vsFontSz,0,vsFontSz*0.3);
+    vsGr.addColorStop(0,'#ffffff');
+    vsGr.addColorStop(0.4,'#ffee44');
+    vsGr.addColorStop(1,'#ff8800');
+    ctx.fillStyle=vsGr;
+    ctx.shadowColor='#ff8800'; ctx.shadowBlur=10*vsAnim;
+    ctx.fillText('VS',0,0);
+    ctx.shadowBlur=0;
+    ctx.restore();
+  }
   // ──────────────────────────────────────────────────────────────
 
   // Control area dark overlay drawn on canvas
@@ -2831,7 +3146,7 @@ function drawGame(dt) {
   ctx.strokeStyle='rgba(255,255,255,0.1)'; ctx.lineWidth=1;
   ctx.beginPath(); ctx.moveTo(0,ctrlTop); ctx.lineTo(W,ctrlTop); ctx.stroke();
 
-  drawBoard(0,LX,BY); drawBoard(1,RX,BY); drawHUD();
+  drawBoard(0,LX,BY); if (!survivalMode) drawBoard(1,RX,BY); drawHUD();
   drawParticles();
 
   // Gem break animations
@@ -3025,8 +3340,8 @@ function drawResult(dt) {
   // Winner character — large, bouncing celebrate pose
   const sc=Math.min(W,H)/260;
   const bounce=Math.abs(Math.sin(resultTimer*2.8))*9*sc;
-  const charIdx=isWin?playerChar:cpuChar;
-  drawCharacter(charIdx,W/2,H*0.52-bounce,sc*1.5,'celebrate');
+  const charIdx=(isWin||(lastGameWasSurvival&&!isWin))?playerChar:(cpuChar>=0?cpuChar:playerChar);
+  drawCharacter(charIdx,W/2,H*0.52-bounce,sc*1.5,lastGameWasSurvival?'hurt':'celebrate');
 
   // WIN/LOSE main text
   const mainTxt=isWin?'YOU WIN!':'GAME OVER';
@@ -3076,24 +3391,42 @@ function drawResult(dt) {
   ctx.lineWidth=1.5;
   ctx.beginPath(); ctx.roundRect(panelX,panelY,panelW,panelH,8); ctx.stroke();
 
-  const scoreFS=Math.min(W*0.038,15);
-  ctx.font=`bold ${scoreFS}px Arial,sans-serif`;
-  // Player score
-  const pScoreX=panelX+panelW*0.26, cpuScoreX=panelX+panelW*0.74;
-  const labelY=panelY+panelH*0.38, valY=panelY+panelH*0.8;
-  ctx.fillStyle='rgba(200,200,220,0.7)'; ctx.font=`${Math.min(W*0.03,11)}px Arial,sans-serif`;
   ctx.textAlign='center';
-  ctx.fillText(CHAR_NAMES[playerChar],pScoreX,labelY);
-  ctx.fillText(CHAR_NAMES[cpuChar],cpuScoreX,labelY);
-  ctx.font=`bold ${Math.min(W*0.048,20)}px Arial,sans-serif`;
-  ctx.fillStyle=isWin?'#ffee44':'#ffffff'; ctx.fillText(scores[0],pScoreX,valY);
-  ctx.fillStyle=isWin?'#ffffff':'#ffee44'; ctx.fillText(scores[1],cpuScoreX,valY);
-  // Divider
-  const divX=panelX+panelW/2;
-  ctx.strokeStyle='rgba(180,180,200,0.3)'; ctx.lineWidth=1;
-  ctx.beginPath(); ctx.moveTo(divX,panelY+6); ctx.lineTo(divX,panelY+panelH-6); ctx.stroke();
-  ctx.fillStyle='rgba(180,180,200,0.5)'; ctx.font=`${Math.min(W*0.028,10)}px Arial,sans-serif`;
-  ctx.fillText('VS',divX,panelY+panelH*0.58);
+  if (lastGameWasSurvival) {
+    // Survival result: show time survived + score
+    const srvMin=Math.floor(survivalTime/60);
+    const srvSec=Math.floor(survivalTime%60);
+    const srvTimeStr=`${srvMin}:${srvSec.toString().padStart(2,'0')}`;
+    const srvLevel=Math.floor(survivalTime/20)+1;
+    ctx.fillStyle='rgba(200,200,220,0.75)'; ctx.font=`${Math.min(W*0.03,12)}px Arial,sans-serif`;
+    ctx.fillText('SURVIVAL MODE',W/2,panelY+panelH*0.32);
+    ctx.font=`bold ${Math.min(W*0.046,18)}px Arial,sans-serif`;
+    ctx.fillStyle='#cc88ff'; ctx.shadowColor='#9900ff'; ctx.shadowBlur=8;
+    ctx.fillText(`Time: ${srvTimeStr}   Level: ${srvLevel}`,W/2,panelY+panelH*0.65);
+    ctx.shadowBlur=0;
+    ctx.font=`bold ${Math.min(W*0.05,20)}px Arial,sans-serif`;
+    ctx.fillStyle='#ffee44'; ctx.shadowColor='#ffcc00'; ctx.shadowBlur=6;
+    ctx.fillText(`Score: ${survivalScore}`,W/2,panelY+panelH*0.92);
+    ctx.shadowBlur=0;
+  } else {
+    const scoreFS=Math.min(W*0.038,15);
+    ctx.font=`bold ${scoreFS}px Arial,sans-serif`;
+    // Player score
+    const pScoreX=panelX+panelW*0.26, cpuScoreX=panelX+panelW*0.74;
+    const labelY=panelY+panelH*0.38, valY=panelY+panelH*0.8;
+    ctx.fillStyle='rgba(200,200,220,0.7)'; ctx.font=`${Math.min(W*0.03,11)}px Arial,sans-serif`;
+    ctx.fillText(CHAR_NAMES[playerChar],pScoreX,labelY);
+    if (cpuChar>=0) ctx.fillText(CHAR_NAMES[cpuChar],cpuScoreX,labelY);
+    ctx.font=`bold ${Math.min(W*0.048,20)}px Arial,sans-serif`;
+    ctx.fillStyle=isWin?'#ffee44':'#ffffff'; ctx.fillText(scores[0],pScoreX,valY);
+    if (cpuChar>=0) { ctx.fillStyle=isWin?'#ffffff':'#ffee44'; ctx.fillText(scores[1],cpuScoreX,valY); }
+    // Divider
+    const divX=panelX+panelW/2;
+    ctx.strokeStyle='rgba(180,180,200,0.3)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(divX,panelY+6); ctx.lineTo(divX,panelY+panelH-6); ctx.stroke();
+    ctx.fillStyle='rgba(180,180,200,0.5)'; ctx.font=`${Math.min(W*0.028,10)}px Arial,sans-serif`;
+    ctx.fillText('VS',divX,panelY+panelH*0.58);
+  }
 
   // Best score / rank display
   const best=getBestScore(difficulty);
@@ -3225,7 +3558,25 @@ function checkGameOver(bi) {
 function endGame(loser) {
   if (gameOver) return;
   gameOver=true; winner=1-loser;
-  setTimeout(()=>setState(S.RESULT),1200);
+  if (survivalMode) {
+    survivalMode=false;
+    lastGameWasSurvival=true;
+    survivalScore=scores[0];
+    setTimeout(()=>setState(S.RESULT),1200);
+    return;
+  }
+  if (arcadeMode && winner===0) {
+    arcadeScoreTotal=(arcadeScoreTotal||0)+scores[0];
+    if (arcadeRound>=3) {
+      setTimeout(()=>setState(S.ARCADE_END),1400);
+    } else {
+      arcadeRound++;
+      setTimeout(()=>setState(S.ARCADE),1200);
+    }
+  } else {
+    if (arcadeMode) arcadeMode=false;
+    setTimeout(()=>setState(S.RESULT),1200);
+  }
 }
 
 // ── 3-Zone Virtual Controller ─────────────────────────────────
@@ -3343,6 +3694,7 @@ document.addEventListener('keydown',e=>{
 canvas.addEventListener('pointerdown',e=>{
   initAudio();
   if (state===S.TITLE||state===S.RESULT) { handleInput('tap'); return; }
+  if (state===S.ARCADE_END) { arcadeMode=false; arcadeScoreTotal=0; setState(S.TITLE); return; }
   if (state===S.CHARSEL) {
     const tx=e.clientX*(canvas.width/canvas.offsetWidth);
     const ty=e.clientY*(canvas.height/canvas.offsetHeight);
@@ -3360,9 +3712,28 @@ canvas.addEventListener('pointerdown',e=>{
     const tx=e.clientX*(canvas.width/canvas.offsetWidth);
     const ty=e.clientY*(canvas.height/canvas.offsetHeight);
     const {cardW,cardH,startX,startY,gap}=getDiffCardLayout();
+    // Difficulty cards
     for (let i=0;i<3;i++) {
       const x1=startX+i*(cardW+(gap||8)), y1=startY, x2=x1+cardW, y2=y1+cardH;
       if (tx>=x1&&tx<=x2&&ty>=y1&&ty<=y2) { difficulty=i; setState(S.VS); return; }
+    }
+    // Arcade button
+    const W=canvas.width, H=canvas.height;
+    const arcBtnW=Math.min(W*0.7,280), arcBtnH=44;
+    const arcBtnX=(W-arcBtnW)/2;
+    const arcBtnY=startY+cardH+Math.min(H*0.06,38)+Math.min(H*0.03,20);
+    if (tx>=arcBtnX&&tx<=arcBtnX+arcBtnW&&ty>=arcBtnY&&ty<=arcBtnY+arcBtnH) {
+      arcadeMode=true; arcadeRound=0; arcadeScoreTotal=0;
+      arcadeOpponents=[0,1,2,3].filter(i=>i!==playerChar);
+      setState(S.ARCADE); return;
+    }
+    // Survival button
+    const srvBtnW=arcBtnW, srvBtnH=arcBtnH;
+    const srvBtnX=arcBtnX;
+    const srvBtnY=arcBtnY+arcBtnH+Math.min(H*0.015,10);
+    if (tx>=srvBtnX&&tx<=srvBtnX+srvBtnW&&ty>=srvBtnY&&ty<=srvBtnY+srvBtnH) {
+      survivalMode=true; difficulty=1; cpuChar=-1;
+      setState(S.GAME); return;
     }
     return;
   }
@@ -3390,20 +3761,38 @@ function setState(s) {
   state=s;
   const ctrl=document.getElementById('controls');
   ctrl.classList.toggle('visible',s===S.GAME);
-  if (s===S.TITLE) { resize(); play('title'); }
-  else if (s===S.CHARSEL) { resize(); selectedChar=playerChar; play('title'); }
+  if (s===S.TITLE) { resize(); play('title'); lastGameWasSurvival=false; }
+  else if (s===S.CHARSEL) { resize(); selectedChar=playerChar; play('title'); lastGameWasSurvival=false; }
   else if (s===S.DIFF) { diffHighlight=0; }
   else if (s===S.VS) {
     vsTimer=2500; vsFlash=0; stopMusic();
-    const avail=[0,1,2,3].filter(i=>i!==playerChar);
-    cpuChar=avail[Math.floor(Math.random()*avail.length)];
+    if (!arcadeMode) {
+      const avail=[0,1,2,3].filter(i=>i!==playerChar);
+      cpuChar=avail[Math.floor(Math.random()*avail.length)];
+    }
     setTimeout(()=>play('battle'),600);
   }
-  else if (s===S.GAME) { resize(); initGame(); }
+  else if (s===S.GAME) {
+    resize();
+    if (survivalMode) { initSurvivalGame(); } else { lastGameWasSurvival=false; initGame(); }
+  }
   else if (s===S.RESULT) {
     resultTimer=0; stopMusic();
-    saveScore(scores[0]);
+    if (!survivalMode) saveScore(scores[0]);
     if (winner===0) { sfx('win'); spawnConfetti(canvas.width); vibrate([200,50,100]); } else { sfx('lose'); vibrate([300]); }
+    setTimeout(()=>play('title'),900);
+  }
+  else if (s===S.ARCADE) {
+    arcadeRoundTimer=0;
+    cpuChar=arcadeOpponents[arcadeRound];
+    difficulty=ARCADE_DIFF[Math.min(arcadeRound,3)];
+    resize();
+  }
+  else if (s===S.ARCADE_END) {
+    resultTimer=0;
+    sfx('win');
+    spawnConfetti(canvas.width);
+    stopMusic();
     setTimeout(()=>play('title'),900);
   }
 }
@@ -3431,6 +3820,41 @@ function updateGame(dt) {
   }
   // Tick ALL CLEAR display timers
   for (let bi=0;bi<2;bi++) if (allClearDisplay[bi].timer>0) allClearDisplay[bi].timer-=dt;
+
+  if (survivalMode) {
+    // Survival mode: track time, ramp gravity, auto-drop counter rows
+    survivalTime+=dt;
+    const srvSpeedLevel=Math.floor(survivalTime/20);
+    const srvBase=DIFF_SETTINGS[1].gravity;
+    fallDelay[0]=Math.max(150, srvBase-srvSpeedLevel*50);
+
+    // Every 30 seconds, drop one row of counter gems
+    const srvInterval=30;
+    const prevIntervals=Math.floor((survivalTime-dt)/srvInterval);
+    const curIntervals=Math.floor(survivalTime/srvInterval);
+    if (curIntervals>prevIntervals && curIntervals>0) {
+      addCounterGems(0, COLS);
+    }
+
+    // Only process board 0
+    if (!pieces[0]) {
+      if (!spawnPiece(0)) { endGame(0); return; }
+    } else {
+      const p=pieces[0];
+      const canFallDown=isValid(boards[0],{...p,y:p.y+1});
+      if (!canFallDown) {
+        if (!lockDelayActive[0]) { lockDelayActive[0]=true; lockDelayTimer[0]=ds.lockDelay; }
+        lockDelayTimer[0]-=dt*1000;
+        if (lockDelayTimer[0]<=0) { lockPiece(0); if (!spawnPiece(0)) { endGame(0); return; } }
+      } else {
+        if (lockDelayActive[0]) { lockDelayActive[0]=false; lockMoveCount[0]=0; }
+        fallTimers[0]+=dt*1000;
+        fallProgress[0]=Math.min(1, fallTimers[0]/fallDelay[0]);
+        if (fallTimers[0]>=fallDelay[0]) { fallTimers[0]=0; pieces[0].y++; fallProgress[0]=0; }
+      }
+    }
+    return;
+  }
 
   // AI timer uses difficulty's aiSpeed
   aiTimer-=dt*1000;
@@ -3475,6 +3899,25 @@ function updateGame(dt) {
   }
 }
 
+function initSurvivalGame() {
+  const ds=DIFF_SETTINGS[1];
+  boards=[makeBoard(),null];
+  pieces=[null,null];
+  queues=[new PieceQueue(playerChar),null];
+  scores=[0,0]; attackBuffer=[0,0];
+  fallTimers=[0,0]; fallDelay=[ds.gravity,0];
+  fallProgress=[0,0];
+  lockDelayTimer=[0,0]; lockDelayActive=[false,false]; lockMoveCount=[0,0];
+  gameOver=false; gamePaused=false; gameTime=0; aiTimer=0; attackWarning=[0,0]; superMeter=[0,0];
+  chainDisplay=[{chain:0,timer:0},{chain:0,timer:0}];
+  allClearDisplay=[{timer:0},{timer:0}];
+  spawnFlash=[0,0];
+  gemBreaks.length=0;
+  survivalTime=0; survivalGems=0; survivalScore=0;
+  updateSuperBtn();
+  spawnPiece(0);
+}
+
 // ============================================================
 // MAIN LOOP
 // ============================================================
@@ -3491,6 +3934,8 @@ function loop(ts) {
   else if (state===S.VS) drawVS(dt);
   else if (state===S.GAME) { updateGame(dt); drawGame(dt); }
   else if (state===S.RESULT) drawResult(dt);
+  else if (state===S.ARCADE) { arcadeRoundTimer+=dt; drawArcade(dt); if(arcadeRoundTimer>2.5) setState(S.VS); }
+  else if (state===S.ARCADE_END) { updateParticles(dt); drawArcadeEnd(dt); }
 
   requestAnimationFrame(loop);
 }
