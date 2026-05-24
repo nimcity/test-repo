@@ -51,7 +51,7 @@ canvas { display:block; width:100vw; height:100dvh; }
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 
-const S = { TITLE:0, CHARSEL:1, VS:2, GAME:3, RESULT:4 };
+const S = { TITLE:0, CHARSEL:1, DIFF:2, VS:3, GAME:4, RESULT:5 };
 let state = S.TITLE;
 
 let CELL=28, BW=168, BH=336, LX=20, RX=210, BY=40;
@@ -72,6 +72,15 @@ const CHAR_NAMES  = ['KAI','MEI','RIKU','SHADOW'];
 let playerChar = 0, cpuChar = 1;
 let vsTimer = 0;
 let winner = 0;
+let difficulty = 1; // 0=easy, 1=medium, 2=hard
+
+const DIFF_SETTINGS = [
+  { name:'EASY',   gravity:1400, aiSpeed:600,  aiError:0.40, attackMult:0.5, lockDelay:500, label:'★☆☆', color:'#44cc44' },
+  { name:'MEDIUM', gravity:750,  aiSpeed:250,  aiError:0.0,  attackMult:1.0, lockDelay:300, label:'★★☆', color:'#ffcc00' },
+  { name:'HARD',   gravity:400,  aiSpeed:120,  aiError:0.0,  attackMult:1.5, lockDelay:150, label:'★★★', color:'#ff4444' },
+];
+
+let soundOn = true;
 
 // ============================================================
 // AUDIO ENGINE
@@ -188,7 +197,7 @@ function scheduleTrack(trackId, startTime) {
 }
 
 function play(trackId) {
-  if (!audioCtx) return;
+  if (!audioCtx || !soundOn) return;
   if (musicTimeout) { clearTimeout(musicTimeout); musicTimeout=null; }
   musicTrackId = trackId;
   function loop() {
@@ -206,7 +215,7 @@ function stopMusic() {
 }
 
 function sfx(name) {
-  if (!audioCtx) return;
+  if (!audioCtx || !soundOn) return;
   const t = audioCtx.currentTime;
   if (name==='place') {
     _note(180, t, 0.12, 'square', 0.25);
@@ -778,12 +787,74 @@ function randomGem(charIdx) {
   return { color: randomColor(charIdx), type: Math.random()<0.15 ? TC : TN };
 }
 
-let boards=[null,null], pieces=[null,null], nextPieces=[null,null];
-let scores=[0,0], pendingCounters=[0,0], fallTimers=[0,0];
+// ============================================================
+// PIECE QUEUE — guarantees power gem opportunities
+// ============================================================
+class PieceQueue {
+  constructor(charIdx) {
+    this.charIdx = charIdx;
+    this.bag = [];
+    this.count = 0;
+  }
+
+  _charColor() {
+    // 35% lean toward character's color
+    return Math.random() < 0.35
+      ? CHAR_COLORS[this.charIdx]
+      : CHAR_COLORS[Math.floor(Math.random()*4)];
+  }
+
+  _gem(forceColor) {
+    const color = forceColor || this._charColor();
+    // 13% crash gem, but NOT on matched pieces
+    const type = (!forceColor && Math.random() < 0.13) ? TC : TN;
+    return { color, type };
+  }
+
+  next() {
+    if (this.bag.length === 0) this._refill();
+    this.count++;
+    return this.bag.shift();
+  }
+
+  peek(offset) {
+    // Ensure we have enough pieces buffered
+    while (this.bag.length <= offset) this._refill();
+    return this.bag[offset];
+  }
+
+  _refill() {
+    // Generate 6 pieces at a time:
+    // Pieces 0,1,3,4: mixed (builds board variety)
+    // Pieces 2,5: MATCHED PAIR (same color both gems — guarantees power gem chance)
+    const matchColor1 = this._charColor();
+    const matchColor2 = CHAR_COLORS[Math.floor(Math.random()*4)];
+
+    for (let i = 0; i < 6; i++) {
+      if (i === 2 || i === 5) {
+        // Matched pair
+        const mc = (i === 2) ? matchColor1 : matchColor2;
+        this.bag.push({ c1:mc, t1:TN, c2:mc, t2:TN });
+      } else {
+        const g1 = this._gem();
+        const g2 = this._gem();
+        this.bag.push({ c1:g1.color, t1:g1.type, c2:g2.color, t2:g2.type });
+      }
+    }
+  }
+}
+
+let boards=[null,null], pieces=[null,null];
+let queues=[null,null];
+let scores=[0,0], attackBuffer=[0,0], fallTimers=[0,0];
 let fallDelay=[600,800], gameOver=false, gameTime=0, aiTimer=0;
 let attackWarning=[0,0];
 let superMeter=[0,0];
 const SUPER_MAX=100;
+
+// Lock delay state
+let lockDelayTimer=[0,0], lockDelayActive=[false,false], lockMoveCount=[0,0];
+const MAX_LOCK_RESETS=8;
 
 function getPieceCells(p) {
   const r=ROTS[p.orient%4];
@@ -799,16 +870,20 @@ function isValid(board, p) {
 }
 
 function spawnPiece(bi) {
-  const ci=(bi===0)?playerChar:cpuChar;
-  if (nextPieces[bi]) {
-    pieces[bi]={c1:nextPieces[bi].c1,t1:nextPieces[bi].t1,
-                c2:nextPieces[bi].c2,t2:nextPieces[bi].t2, x:2,y:0,orient:0};
-  } else {
-    const g1=randomGem(ci),g2=randomGem(ci);
-    pieces[bi]={c1:g1.color,t1:g1.type,c2:g2.color,t2:g2.type, x:2,y:0,orient:0};
+  // Apply buffered attacks before spawning
+  if (attackBuffer[bi] > 0) {
+    addCounterGems(bi, attackBuffer[bi]);
+    attackBuffer[bi] = 0;
   }
-  const ng1=randomGem(ci),ng2=randomGem(ci);
-  nextPieces[bi]={c1:ng1.color,t1:ng1.type,c2:ng2.color,t2:ng2.type};
+  // Reset lock delay state for new piece
+  lockDelayActive[bi] = false;
+  lockDelayTimer[bi] = 0;
+  lockMoveCount[bi] = 0;
+
+  // Get next piece from queue
+  const next = queues[bi].next();
+  pieces[bi] = { c1:next.c1, t1:next.t1, c2:next.c2, t2:next.t2, x:2, y:0, orient:0 };
+
   for (const [cx2,cy2] of getPieceCells(pieces[bi])) {
     if (cy2>=0 && boards[bi][cy2][cx2]) return false;
   }
@@ -917,10 +992,11 @@ function processChains(bi, chainStep) {
   checkPowerGems(board);
 
   const mult=Math.min(chainStep,5);
-  const attack=Math.floor(destroyed*mult/3);
+  const rawAttack=Math.floor(destroyed*mult/3);
+  const attack=Math.floor(rawAttack*DIFF_SETTINGS[difficulty].attackMult);
   if (attack>0) {
     const op=1-bi;
-    pendingCounters[op]+=attack;
+    attackBuffer[op]+=attack;
     attackWarning[op]=90;
     sfx('attack');
   }
@@ -965,14 +1041,14 @@ function activateSuper(bi) {
         if(h>bestH){bestH=h;bestCol=c;}
       }
       for(let r=0;r<ROWS;r++) board[r][bestCol]=null;
-      if(bestH>0){ pendingCounters[op]+=bestH; attackWarning[op]=120; sfx('attack'); }
+      if(bestH>0){ attackBuffer[op]+=bestH; attackWarning[op]=120; sfx('attack'); }
       break;
     }
     case 1: { // MEI — Spinning Kick: destroy ALL crash gems on board + send 6 attacks
       let kicked=0;
       for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++)
         if(board[r][c]&&board[r][c].type===TC){ board[r][c]=null; kicked++; }
-      pendingCounters[op]+=6;
+      attackBuffer[op]+=6;
       attackWarning[op]=120;
       sfx('crash');
       break;
@@ -985,7 +1061,7 @@ function activateSuper(bi) {
       break;
     }
     case 3: { // SHADOW — Dark Spiral: drop 8 heavy counter gems on opponent
-      pendingCounters[op]+=8;
+      attackBuffer[op]+=8;
       attackWarning[op]=180;
       sfx('attack');
       // Also darken the opponent board briefly (visual flash handled in drawBoard)
@@ -1003,25 +1079,21 @@ function lockPiece(bi) {
   if (cells[1][1]>=0&&cells[1][1]<ROWS) boards[bi][cells[1][1]][cells[1][0]]={type:p.t2||TN,color:p.c2};
   sfx('place');
   pieces[bi]=null;
+  lockDelayActive[bi]=false;
+  lockDelayTimer[bi]=0;
+  lockMoveCount[bi]=0;
   checkPowerGems(boards[bi]);
   applyGravity(boards[bi]);
   processChains(bi,1);
-  // Spawn next
-  const ci=(bi===0)?playerChar:cpuChar;
-  const nc1=nextPieces[bi]?nextPieces[bi].c1:randomColor(ci);
-  const nc2=nextPieces[bi]?nextPieces[bi].c2:randomColor(ci);
-  pieces[bi]={c1:nc1, c2:nc2, x:2, y:0, orient:0};
-  nextPieces[bi]={c1:randomColor(ci), c2:randomColor(ci)};
 }
 
-function addCounterGems(bi) {
-  if (pendingCounters[bi]<=0) return;
-  const count=Math.min(pendingCounters[bi],COLS*3);
-  pendingCounters[bi]=0;
-  const rows=Math.max(1,Math.ceil(count/COLS));
+function addCounterGems(bi, count) {
+  if (!count || count<=0) return;
+  const clamped=Math.min(count,COLS*3);
+  const rows=Math.max(1,Math.ceil(clamped/COLS));
   // Shift board up
   for (let r=0;r<ROWS-rows;r++) for (let c=0;c<COLS;c++) boards[bi][r][c]=boards[bi][r+rows][c];
-  let rem=count;
+  let rem=clamped;
   for (let r=ROWS-rows;r<ROWS;r++) {
     for (let c=0;c<COLS;c++) {
       boards[bi][r][c]=rem>0?{type:TK,color:'gray'}:null;
@@ -1073,6 +1145,12 @@ function doAI() {
   }
   // CPU uses super when ready
   if (superMeter[1]>=SUPER_MAX) { activateSuper(1); return; }
+  // Apply AI error at easy difficulty — sometimes pick wrong target
+  const ds=DIFF_SETTINGS[difficulty];
+  if (ds.aiError > 0 && Math.random() < ds.aiError) {
+    bX = Math.floor(Math.random()*COLS);
+    bO = Math.floor(Math.random()*4);
+  }
   // Move one step toward target
   if (p.orient!==bO) {
     const no=(p.orient+1)%4;
@@ -1084,13 +1162,40 @@ function doAI() {
 }
 
 function initGame() {
+  const ds = DIFF_SETTINGS[difficulty];
   boards=[makeBoard(),makeBoard()];
-  pieces=[null,null]; nextPieces=[null,null];
-  scores=[0,0]; pendingCounters=[0,0];
-  fallTimers=[0,0]; fallDelay=[600,800];
+  pieces=[null,null];
+  queues=[new PieceQueue(playerChar), new PieceQueue(cpuChar)];
+  scores=[0,0]; attackBuffer=[0,0];
+  fallTimers=[0,0]; fallDelay=[ds.gravity, Math.round(ds.gravity*0.85)];
+  lockDelayTimer=[0,0]; lockDelayActive=[false,false]; lockMoveCount=[0,0];
   gameOver=false; gameTime=0; aiTimer=0; attackWarning=[0,0]; superMeter=[0,0];
   updateSuperBtn();
   spawnPiece(0); spawnPiece(1);
+}
+
+// ============================================================
+// HIGH SCORES
+// ============================================================
+function getScores() {
+  try { return JSON.parse(localStorage.getItem('pf_hiscores') || '{}'); }
+  catch(e) { return {}; }
+}
+function saveScore(score) {
+  const key = ['easy','medium','hard'][difficulty];
+  const charName = CHAR_NAMES[playerChar];
+  const all = getScores();
+  if (!all[key]) all[key] = [];
+  all[key].push({ score, char: charName, date: new Date().toLocaleDateString() });
+  all[key].sort((a,b) => b.score - a.score);
+  all[key] = all[key].slice(0, 5);
+  localStorage.setItem('pf_hiscores', JSON.stringify(all));
+}
+function getBestScore(diffIdx) {
+  const key = ['easy','medium','hard'][diffIdx];
+  const all = getScores();
+  if (all[key] && all[key].length > 0) return all[key][0].score;
+  return null;
 }
 
 // ============================================================
@@ -1124,6 +1229,13 @@ function drawTitle(dt) {
   ctx.fillStyle='#ffaa44'; ctx.font=`bold ${Math.max(12,14*sc)}px Arial,sans-serif`; ctx.textAlign='center';
   ctx.fillText('KAI',W*0.18,H*0.5+66*sc+bounce);
   ctx.fillText('SHADOW',W*0.82,H*0.5+66*sc-bounce);
+
+  // Show best score if one exists
+  const bestMed = getBestScore(1);
+  if (bestMed !== null) {
+    ctx.fillStyle='rgba(255,220,100,0.75)'; ctx.font=`${Math.min(W*0.035,14)}px Arial,sans-serif`;
+    ctx.fillText(`Best: ${bestMed}`,W/2,H*0.72);
+  }
 
   if (Math.floor(blinkTimer*2)%2===0) {
     ctx.fillStyle='#ffffaa'; ctx.font=`bold ${Math.min(W*0.055,26)}px Arial,sans-serif`;
@@ -1225,6 +1337,81 @@ function drawVS(dt) {
 function getCharBg(idx) { return ['#330000','#000033','#332200','#001a00'][idx]; }
 
 // ============================================================
+// DIFFICULTY SELECT SCREEN
+// ============================================================
+let diffHighlight=0;
+
+function getDiffCardLayout() {
+  const W=canvas.width, H=canvas.height;
+  const totalW=Math.min(W*0.94,520);
+  const cardW=totalW/3-8;
+  const cardH=cardW*1.35;
+  const startX=(W-totalW)/2;
+  const startY=H*0.28;
+  return {cardW,cardH,startX,startY,totalW};
+}
+
+function drawDiff(dt) {
+  diffHighlight+=dt*3;
+  const W=canvas.width, H=canvas.height;
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#040018'); grad.addColorStop(1,'#12002e');
+  ctx.fillStyle=grad; ctx.fillRect(0,0,W,H);
+
+  ctx.fillStyle='#ffdd44'; ctx.font=`bold ${Math.min(W*0.062,30)}px Arial,sans-serif`; ctx.textAlign='center';
+  ctx.shadowColor='#ffaa00'; ctx.shadowBlur=10;
+  ctx.fillText('SELECT DIFFICULTY',W/2,H*0.13); ctx.shadowBlur=0;
+
+  const {cardW,cardH,startX,startY}=getDiffCardLayout();
+  const descs=['Slow fall, forgiving AI','Balanced challenge','Fast & ruthless AI'];
+
+  for (let i=0;i<3;i++) {
+    const ds=DIFF_SETTINGS[i];
+    const cx2=startX+i*(cardW+8)+cardW/2;
+    const sel=i===difficulty;
+    const glow=sel?(4+3*Math.sin(diffHighlight)):0;
+
+    ctx.fillStyle=sel?`rgba(${i===0?'68,204,68':i===1?'255,204,0':'255,68,68'},0.18)`:'rgba(255,255,255,0.05)';
+    ctx.strokeStyle=sel?ds.color:'rgba(140,140,200,0.35)';
+    ctx.lineWidth=sel?3:1.5;
+    ctx.shadowColor=ds.color; ctx.shadowBlur=sel?glow*3:0;
+    ctx.beginPath(); ctx.roundRect(startX+i*(cardW+8),startY,cardW,cardH,12);
+    ctx.fill(); ctx.stroke(); ctx.shadowBlur=0;
+
+    // Name
+    ctx.fillStyle=ds.color; ctx.font=`bold ${Math.min(cardW*0.17,18)}px Arial,sans-serif`; ctx.textAlign='center';
+    ctx.fillText(ds.name,cx2,startY+cardH*0.18);
+
+    // Stars
+    ctx.fillStyle='#ffdd00'; ctx.font=`${Math.min(cardW*0.2,20)}px Arial,sans-serif`;
+    ctx.fillText(ds.label,cx2,startY+cardH*0.36);
+
+    // Description
+    ctx.fillStyle=sel?'#ffffff':'#aaaacc';
+    ctx.font=`${Math.min(cardW*0.11,12)}px Arial,sans-serif`;
+    // Word-wrap desc into 2 lines if needed
+    const words=descs[i].split(' ');
+    let line1='',line2='';
+    for (const w of words) {
+      if ((line1+' '+w).trim().length<14) line1=(line1+' '+w).trim();
+      else line2=(line2+' '+w).trim();
+    }
+    ctx.fillText(line1,cx2,startY+cardH*0.58);
+    if (line2) ctx.fillText(line2,cx2,startY+cardH*0.72);
+
+    // Best score for this difficulty
+    const best=getBestScore(i);
+    if (best!==null) {
+      ctx.fillStyle='rgba(255,220,100,0.7)'; ctx.font=`${Math.min(cardW*0.1,11)}px Arial,sans-serif`;
+      ctx.fillText(`Best: ${best}`,cx2,startY+cardH*0.88);
+    }
+  }
+
+  ctx.fillStyle='#888899'; ctx.font=`${Math.min(W*0.032,13)}px Arial,sans-serif`; ctx.textAlign='center';
+  ctx.fillText('Tap a card to choose difficulty',W/2,H*0.88);
+}
+
+// ============================================================
 // RESIZE
 // ============================================================
 function resize() {
@@ -1238,7 +1425,7 @@ function resize() {
   const totW=BW*2+CELL*2;
   LX=(W-totW)/2; RX=LX+BW+CELL*2;
   BY=Math.max(50,(avail-BH)/2+28);
-  if (state===S.TITLE||state===S.CHARSEL) initParticles();
+  if (state===S.TITLE||state===S.CHARSEL||state===S.DIFF) initParticles();
 }
 
 // ============================================================
@@ -1372,7 +1559,7 @@ function drawHUD() {
   ctx.fillStyle='#ffffff'; ctx.font=`bold ${Math.min(CELL*0.65,15)}px Arial,sans-serif`; ctx.textAlign='left';
   ctx.fillText(CHAR_NAMES[playerChar],LX+56,pHY+15);
   ctx.fillStyle='#ffdd44'; ctx.fillText(`${scores[0]}`,LX+56,pHY+32);
-  if (pendingCounters[0]>0) { ctx.fillStyle='#ff5555'; ctx.fillText(`+${pendingCounters[0]}`,LX+56,pHY+48); }
+  if (attackBuffer[0]>0) { ctx.fillStyle='#ff5555'; ctx.fillText(`+${attackBuffer[0]}`,LX+56,pHY+48); }
   // Player super meter bar
   drawSuperBar(LX, pHY+54, BW, 7, superMeter[0]);
 
@@ -1382,24 +1569,34 @@ function drawHUD() {
   ctx.fillStyle='#ffffff'; ctx.textAlign='right';
   ctx.fillText(CHAR_NAMES[cpuChar],RX+BW-56,cHY+15);
   ctx.fillStyle='#ffdd44'; ctx.fillText(`${scores[1]}`,RX+BW-56,cHY+32);
-  if (pendingCounters[1]>0) { ctx.fillStyle='#ff5555'; ctx.fillText(`+${pendingCounters[1]}`,RX+BW-56,cHY+48); }
+  if (attackBuffer[1]>0) { ctx.fillStyle='#ff5555'; ctx.fillText(`+${attackBuffer[1]}`,RX+BW-56,cHY+48); }
   // CPU super meter bar
   drawSuperBar(RX, cHY+54, BW, 7, superMeter[1]);
 
-  // Next piece preview
+  // Next 2 piece previews
   const nS=Math.floor(CELL*0.82);
   ctx.fillStyle='#aaaacc'; ctx.font=`${Math.min(CELL*0.55,11)}px Arial,sans-serif`; ctx.textAlign='left';
   ctx.fillText('NEXT',LX+BW+3,BY+12);
-  if (nextPieces[0]) {
-    drawGem(LX+BW+3,BY+14,nS,nS,nextPieces[0].c1,nextPieces[0].t1||TN);
-    drawGem(LX+BW+3,BY+14+nS+2,nS,nS,nextPieces[0].c2,nextPieces[0].t2||TN);
+  if (queues[0]) {
+    const n0=queues[0].peek(0), n1=queues[0].peek(1);
+    if (n0) { drawGem(LX+BW+3,BY+14,nS,nS,n0.c1,n0.t1||TN); drawGem(LX+BW+3,BY+14+nS+2,nS,nS,n0.c2,n0.t2||TN); }
+    if (n1) { drawGem(LX+BW+3,BY+14+(nS+2)*2+4,nS,nS,n1.c1,n1.t1||TN); drawGem(LX+BW+3,BY+14+(nS+2)*3+4,nS,nS,n1.c2,n1.t2||TN); }
   }
   ctx.textAlign='right';
   ctx.fillText('NEXT',RX-3,BY+12);
-  if (nextPieces[1]) {
-    drawGem(RX-nS-3,BY+14,nS,nS,nextPieces[1].c1,nextPieces[1].t1||TN);
-    drawGem(RX-nS-3,BY+14+nS+2,nS,nS,nextPieces[1].c2,nextPieces[1].t2||TN);
+  if (queues[1]) {
+    const n0=queues[1].peek(0), n1=queues[1].peek(1);
+    if (n0) { drawGem(RX-nS-3,BY+14,nS,nS,n0.c1,n0.t1||TN); drawGem(RX-nS-3,BY+14+nS+2,nS,nS,n0.c2,n0.t2||TN); }
+    if (n1) { drawGem(RX-nS-3,BY+14+(nS+2)*2+4,nS,nS,n1.c1,n1.t1||TN); drawGem(RX-nS-3,BY+14+(nS+2)*3+4,nS,nS,n1.c2,n1.t2||TN); }
   }
+
+  // Sound toggle button (top-right of canvas)
+  const W=canvas.width;
+  const btnW=52, btnH=26, btnX=W-btnW-6, btnY=6;
+  ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.beginPath(); ctx.roundRect(btnX,btnY,btnW,btnH,6); ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,0.3)'; ctx.lineWidth=1; ctx.beginPath(); ctx.roundRect(btnX,btnY,btnW,btnH,6); ctx.stroke();
+  ctx.fillStyle=soundOn?'#88ff88':'#ff8888'; ctx.font=`bold ${10}px Arial,sans-serif`; ctx.textAlign='center';
+  ctx.fillText(soundOn?'♪ ON':'✕ OFF',btnX+btnW/2,btnY+btnH*0.68);
 }
 
 function drawSuperBar(x, y, w, h, val) {
@@ -1460,6 +1657,14 @@ function drawResult(dt) {
   ctx.fillStyle='#ccccff'; ctx.font=`${Math.min(W*0.045,20)}px Arial,sans-serif`;
   ctx.fillText(`${CHAR_NAMES[playerChar]}: ${scores[0]}    ${CHAR_NAMES[cpuChar]}: ${scores[1]}`,W/2,H*0.26);
 
+  // Best score display
+  const best=getBestScore(difficulty);
+  if (best!==null) {
+    ctx.fillStyle='rgba(255,220,100,0.85)'; ctx.font=`${Math.min(W*0.04,18)}px Arial,sans-serif`;
+    ctx.textAlign='center';
+    ctx.fillText(`Best: ${best}  [${DIFF_SETTINGS[difficulty].name}]`,W/2,H*0.34);
+  }
+
   if (Math.floor(resultTimer*2)%2===0) {
     ctx.fillStyle='#ffffaa'; ctx.font=`bold ${Math.min(W*0.048,22)}px Arial,sans-serif`;
     ctx.shadowColor='#ffff44'; ctx.shadowBlur=8;
@@ -1476,24 +1681,53 @@ function handleInput(action) {
   if (state===S.CHARSEL) {
     if (action==='left'||action==='up') selectedChar=(selectedChar-1+4)%4;
     else if (action==='right'||action==='down') selectedChar=(selectedChar+1)%4;
-    else if (action==='select'||action==='tap') { playerChar=selectedChar; setState(S.VS); }
+    else if (action==='select'||action==='tap') { playerChar=selectedChar; setState(S.DIFF); }
+    return;
+  }
+  if (state===S.DIFF) {
+    if (action==='left') difficulty=Math.max(0,difficulty-1);
+    else if (action==='right') difficulty=Math.min(2,difficulty+1);
+    else if (action==='select'||action==='tap') setState(S.VS);
     return;
   }
   if (state===S.GAME&&!gameOver) {
     const p=pieces[0]; if (!p) return;
-    if (action==='left') { const np={...p,x:p.x-1}; if (isValid(boards[0],np)) pieces[0].x--; }
-    else if (action==='right') { const np={...p,x:p.x+1}; if (isValid(boards[0],np)) pieces[0].x++; }
+    if (action==='left') {
+      const np={...p,x:p.x-1};
+      if (isValid(boards[0],np)) {
+        pieces[0].x--;
+        if (lockDelayActive[0]&&lockMoveCount[0]<MAX_LOCK_RESETS) { lockDelayTimer[0]=DIFF_SETTINGS[difficulty].lockDelay; lockMoveCount[0]++; }
+      }
+    }
+    else if (action==='right') {
+      const np={...p,x:p.x+1};
+      if (isValid(boards[0],np)) {
+        pieces[0].x++;
+        if (lockDelayActive[0]&&lockMoveCount[0]<MAX_LOCK_RESETS) { lockDelayTimer[0]=DIFF_SETTINGS[difficulty].lockDelay; lockMoveCount[0]++; }
+      }
+    }
     else if (action==='down') {
       const np={...p,y:p.y+1};
-      if (isValid(boards[0],np)) { pieces[0].y++; scores[0]++; }
-      else { lockPiece(0); checkGameOver(0); }
+      if (isValid(boards[0],np)) { pieces[0].y++; scores[0]++; fallTimers[0]=0; }
+      else {
+        // Soft drop while on ground locks immediately
+        lockPiece(0);
+        if (!spawnPiece(0)) { endGame(0); return; }
+      }
     }
-    else if (action==='rotleft') rotatePlayer(-1);
-    else if (action==='rotright') rotatePlayer(1);
+    else if (action==='rotleft') {
+      rotatePlayer(-1);
+      if (lockDelayActive[0]&&lockMoveCount[0]<MAX_LOCK_RESETS) { lockDelayTimer[0]=DIFF_SETTINGS[difficulty].lockDelay; lockMoveCount[0]++; }
+    }
+    else if (action==='rotright') {
+      rotatePlayer(1);
+      if (lockDelayActive[0]&&lockMoveCount[0]<MAX_LOCK_RESETS) { lockDelayTimer[0]=DIFF_SETTINGS[difficulty].lockDelay; lockMoveCount[0]++; }
+    }
     else if (action==='super') activateSuper(0);
     else if (action==='harddrop') {
       while (isValid(boards[0],{...pieces[0],y:pieces[0].y+1})) { pieces[0].y++; scores[0]++; }
-      lockPiece(0); checkGameOver(0);
+      lockPiece(0);
+      if (!spawnPiece(0)) { endGame(0); return; }
     }
   }
 }
@@ -1550,6 +1784,12 @@ document.addEventListener('keydown',e=>{
     else if (e.key==='Enter'||e.key===' ') { handleInput('select'); e.preventDefault(); }
     return;
   }
+  if (state===S.DIFF) {
+    if (e.key==='ArrowLeft') { handleInput('left'); e.preventDefault(); }
+    else if (e.key==='ArrowRight') { handleInput('right'); e.preventDefault(); }
+    else if (e.key==='Enter'||e.key===' ') { handleInput('select'); e.preventDefault(); }
+    return;
+  }
   if (state===S.GAME) {
     if (e.key==='ArrowLeft') handleInput('left');
     else if (e.key==='ArrowRight') handleInput('right');
@@ -1573,11 +1813,69 @@ canvas.addEventListener('pointerdown',e=>{
     for (let i=0;i<4;i++) {
       const [gx,gy]=pos[i];
       const x1=sX+gx*cW+4,y1=sY+gy*cH+4,x2=x1+cW-8,y2=y1+cH-8;
-      if (tx>=x1&&tx<=x2&&ty>=y1&&ty<=y2) { selectedChar=i; playerChar=i; setState(S.VS); return; }
+      if (tx>=x1&&tx<=x2&&ty>=y1&&ty<=y2) { selectedChar=i; playerChar=i; setState(S.DIFF); return; }
     }
-    playerChar=selectedChar; setState(S.VS);
+    playerChar=selectedChar; setState(S.DIFF);
+    return;
+  }
+  if (state===S.DIFF) {
+    const tx=e.clientX*(canvas.width/canvas.offsetWidth);
+    const ty=e.clientY*(canvas.height/canvas.offsetHeight);
+    const {cardW,cardH,startX,startY}=getDiffCardLayout();
+    for (let i=0;i<3;i++) {
+      const x1=startX+i*(cardW+8), y1=startY, x2=x1+cardW, y2=y1+cardH;
+      if (tx>=x1&&tx<=x2&&ty>=y1&&ty<=y2) { difficulty=i; setState(S.VS); return; }
+    }
+    return;
+  }
+  if (state===S.GAME) {
+    // Check sound toggle button tap
+    const tx=e.clientX*(canvas.width/canvas.offsetWidth);
+    const ty=e.clientY*(canvas.height/canvas.offsetHeight);
+    const W=canvas.width;
+    const btnW=52, btnH=26, btnX=W-btnW-6, btnY=6;
+    if (tx>=btnX&&tx<=btnX+btnW&&ty>=btnY&&ty<=btnY+btnH) {
+      soundOn=!soundOn;
+      if (soundOn) { initAudio(); play('battle'); }
+      else stopMusic();
+      return;
+    }
   }
 });
+
+// Swipe gesture controls on canvas
+let touchStart=null;
+const SWIPE_THRESHOLD=30;
+
+canvas.addEventListener('touchstart',e=>{
+  if (state!==S.GAME) return;
+  e.preventDefault();
+  const t=e.touches[0];
+  touchStart={x:t.clientX,y:t.clientY,time:Date.now()};
+},{passive:false});
+
+canvas.addEventListener('touchend',e=>{
+  if (state!==S.GAME||!touchStart) return;
+  e.preventDefault();
+  const t=e.changedTouches[0];
+  const dx=t.clientX-touchStart.x;
+  const dy=t.clientY-touchStart.y;
+  const dt2=Date.now()-touchStart.time;
+  const dist=Math.hypot(dx,dy);
+
+  if (dist<18&&dt2<250) {
+    // Tap: rotate right
+    handleInput('rotright');
+  } else if (Math.abs(dx)>Math.abs(dy)&&Math.abs(dx)>SWIPE_THRESHOLD) {
+    if (dx>0) handleInput('right');
+    else handleInput('left');
+  } else if (dy>SWIPE_THRESHOLD) {
+    handleInput('harddrop');
+  } else if (dy<-SWIPE_THRESHOLD) {
+    handleInput('rotleft');
+  }
+  touchStart=null;
+},{passive:false});
 
 // ============================================================
 // STATE MACHINE
@@ -1588,6 +1886,7 @@ function setState(s) {
   ctrl.classList.toggle('visible',s===S.GAME);
   if (s===S.TITLE) { resize(); play('title'); }
   else if (s===S.CHARSEL) { resize(); selectedChar=playerChar; play('title'); }
+  else if (s===S.DIFF) { diffHighlight=0; }
   else if (s===S.VS) {
     vsTimer=2500; vsFlash=0; stopMusic();
     const avail=[0,1,2,3].filter(i=>i!==playerChar);
@@ -1597,6 +1896,7 @@ function setState(s) {
   else if (s===S.GAME) { resize(); initGame(); }
   else if (s===S.RESULT) {
     resultTimer=0; stopMusic();
+    saveScore(scores[0]);
     if (winner===0) sfx('win'); else sfx('lose');
     setTimeout(()=>play('title'),900);
   }
@@ -1608,37 +1908,44 @@ function setState(s) {
 function updateGame(dt) {
   if (gameOver) return;
   gameTime+=dt;
+  const ds=DIFF_SETTINGS[difficulty];
 
-  // AI
+  // AI timer uses difficulty's aiSpeed
   aiTimer-=dt*1000;
-  if (aiTimer<=0) { aiTimer=880; doAI(); }
+  if (aiTimer<=0) { aiTimer=ds.aiSpeed; doAI(); }
 
-  // Difficulty ramp
-  if (gameTime>30) fallDelay[0]=Math.max(180,600-(gameTime-30)*4);
-  if (gameTime>20) fallDelay[1]=Math.max(280,800-(gameTime-20)*4);
+  // Difficulty ramp (gentle, starting from difficulty base)
+  const rampBase0=ds.gravity;
+  const rampBase1=Math.round(ds.gravity*0.85);
+  if (gameTime>30) fallDelay[0]=Math.max(Math.round(rampBase0*0.3), rampBase0-(gameTime-30)*4);
+  if (gameTime>20) fallDelay[1]=Math.max(Math.round(rampBase1*0.35), rampBase1-(gameTime-20)*4);
 
   for (let bi=0;bi<2;bi++) {
     if (!pieces[bi]) {
-      if (pendingCounters[bi]>0) addCounterGems(bi);
       if (!spawnPiece(bi)) { endGame(bi); return; }
       continue;
     }
-    fallTimers[bi]+=dt*1000;
-    if (fallTimers[bi]>=fallDelay[bi]) {
-      fallTimers[bi]=0;
-      const p=pieces[bi];
-      const np={...p,y:p.y+1};
-      if (isValid(boards[bi],np)) {
-        pieces[bi].y++;
-      } else {
-        const prevPiece={...p};
+    const p=pieces[bi];
+    const canFallDown=isValid(boards[bi],{...p,y:p.y+1});
+
+    if (!canFallDown) {
+      // Lock delay logic
+      if (!lockDelayActive[bi]) {
+        lockDelayActive[bi]=true;
+        lockDelayTimer[bi]=ds.lockDelay;
+      }
+      lockDelayTimer[bi]-=dt*1000;
+      if (lockDelayTimer[bi]<=0) {
         lockPiece(bi);
-        // Check if new piece collides immediately
-        if (pieces[bi]) {
-          for (const [cx2,cy2] of getPieceCells(pieces[bi])) {
-            if (cy2>=0&&boards[bi][cy2][cx2]) { endGame(bi); return; }
-          }
-        }
+        if (!spawnPiece(bi)) { endGame(bi); return; }
+      }
+    } else {
+      // Piece can fall — cancel lock delay if it was active
+      if (lockDelayActive[bi]) { lockDelayActive[bi]=false; lockMoveCount[bi]=0; }
+      fallTimers[bi]+=dt*1000;
+      if (fallTimers[bi]>=fallDelay[bi]) {
+        fallTimers[bi]=0;
+        pieces[bi].y++;
       }
     }
   }
@@ -1656,6 +1963,7 @@ function loop(ts) {
 
   if (state===S.TITLE) { updateParticles(dt); drawTitle(dt); }
   else if (state===S.CHARSEL) drawCharSel(dt);
+  else if (state===S.DIFF) drawDiff(dt);
   else if (state===S.VS) drawVS(dt);
   else if (state===S.GAME) { updateGame(dt); drawGame(dt); }
   else if (state===S.RESULT) drawResult(dt);
